@@ -39,7 +39,7 @@ const isAdminRoute = useLocation().pathname.startsWith('/admin');
         <Route path='/favorites' element={<Favorites/>}/>
         <Route path='/admin/*' element={<Layout/>}>
           <Route index element={<Dashboard/>}/>
-          <Route path="add-show" element={<AddShows/>}/>
+          <Route path="add-shows" element={<AddShows/>}/>
           <Route path="list-shows" element={<ListShows/>}/>
           <Route path="list-bookings" element={<ListBookings/>}/>
 
