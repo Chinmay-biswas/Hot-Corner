@@ -1,60 +1,63 @@
 import { Inngest } from "inngest";
 import User from "../models/User.js";
 
-// Create a client to send and receive events
+// Create the Inngest client
 export const inngest = new Inngest({ id: "movie-ticket-booking" });
 
-//inngest function to save user data data base
+/**
+ * 1. Handle Clerk user creation → Save to DB
+ */
+const syncUserCreation = inngest.createFunction(
+  { id: "sync-user-from-clerk" },
+  { event: "webhook-integration/user.created" }, 
+  async ({ event }) => {
+    const { id, first_name, last_name, email_addresses, image_url } = event.data;
 
-const syncUserCreation =inngest.createFunction(
-    {id: 'sync-user-from-clerk'},
-    { event: 'clerk/user.created' },
-    async ({ event })=>{
-        const{id,first_name,last_name, email_addresses, image_url} = event.data
-        const userData ={
-            _id:id,
-            email: email_addresses[0].email_address,
-            name: first_name+' '+last_name,
-            image: image_url
-        }
-        await User.create(userData)
-    }
-)
+    const userData = {
+      _id: id,
+      email: email_addresses[0].email_address,
+      name: `${first_name} ${last_name}`,
+      image: image_url,
+    };
 
-//inngest function to delete user from database
+    await User.create(userData);
+  }
+);
 
-const syncUserDeletion =inngest.createFunction(
-    {id: 'delete-user-with-clerk'},
-    { event: 'clerk/user.deleted' },
-    async ({event})=>{
-        
-        const {id}=event.data
-        await User.findByIdAndDelete(id)
-    }
-)
+/**
+ * 2. Handle Clerk user deletion → Remove from DB
+ */
+const syncUserDeletion = inngest.createFunction(
+  { id: "delete-user-with-clerk" },
+  { event: "webhook-integration/user.deleted" }, 
+  async ({ event }) => {
+    const { id } = event.data;
+    await User.findByIdAndDelete(id);
+  }
+);
 
-//inngest function to update user from database
+/**
+ * 3. Handle Clerk user update → Update in DB
+ */
+const syncUserUpdate = inngest.createFunction(
+  { id: "update-user-from-clerk" },
+  { event: "webhook-integration/user.updated" },
+  async ({ event }) => {
+    const { id, first_name, last_name, email_addresses, image_url } = event.data;
 
-const syncUserUpdate =inngest.createFunction(
-    {id: 'update-user-from-clerk'},
-    { event: "clerk/user.update" },
-    async ({event})=>{
-        
-        const{id,first_name,last_name, email_addresses, image_url} =event.data
-        const userData ={
-            _id:id,
-            email: email_addresses[0].email_address,
-            name: first_name+' '+last_name,
-            image: image_url
-        }
-        await User.findByIdAndUpdate(id,userData)
-    }
-)
+    const userData = {
+      email: email_addresses[0].email_address,
+      name: `${first_name} ${last_name}`,
+      image: image_url,
+    };
 
-// Create an empty array where we'll export future Inngest functions
+    await User.findByIdAndUpdate(id, userData);
+  }
+);
+
+// Export functions for Inngest to register
 export const functions = [
-    syncUserCreation,
-    syncUserDeletion,
-    syncUserUpdate
-
+  syncUserCreation,
+  syncUserDeletion,
+  syncUserUpdate,
 ];
