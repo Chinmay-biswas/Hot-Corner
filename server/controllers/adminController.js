@@ -1,6 +1,6 @@
 /// check if i am amin or not break the third wall 
 
-import Booking from "../models/Booking";
+import Booking from "../models/Booking.js";
 
 export const isAdmin = async (req,res)=>{
     res.json({success:true , isAdmin:true})
