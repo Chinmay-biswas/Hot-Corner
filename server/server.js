@@ -12,6 +12,7 @@ import userRouter from './routes/userRoutes.js';
 
 
 
+
 const app = express();
 const port = 3000;
 
@@ -31,5 +32,6 @@ app.use('/api/show',showRouter)
 app.use('/api/booking',bookingRouter)
 app.use('/api/admin',adminRouter)
 app.use('/api/user',userRouter)
+
 
 app.listen(port, () => console.log(`server listening at http://localhost:${port}`));

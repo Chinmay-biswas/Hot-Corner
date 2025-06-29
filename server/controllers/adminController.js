@@ -1,6 +1,9 @@
 /// check if i am amin or not break the third wall 
 
 import Booking from "../models/Booking.js";
+import Show from "../models/Show.js";
+import Users from "../models/User.js";
+
 
 export const isAdmin = async (req,res)=>{
     res.json({success:true , isAdmin:true})
@@ -16,9 +19,10 @@ export const getDashboardData = async(req,res )=>{
 
         const dashboardData ={
             totalBookings:bookings.length,
-            totalRevenue:bookings.reduce((acc,bookings)=>acc+ booking.amount,0),
-            activeShow,
-            totalUser
+            totalRevenue:bookings.reduce((acc, booking) => acc + booking.amount, 0),
+            activeShows,
+            totalUsers
+
 
         }
         res.json({success:true,dashboardData})
@@ -63,10 +67,11 @@ export const getAllShows= async (req,res)=>{
 
         try {
 
-            const bookings = await Booking.find({}).populate('users').populate({
+            const bookings = await Booking.find({}).populate('user').populate({
                 path:"show",
                 populate:{path:"movie"}
-            }).sort({createdAT : -1});
+            }).sort({ createdAt: -1 });  // Mongo default timestamp is `createdAt`
+
 
 
             res.json({success:true, bookings});

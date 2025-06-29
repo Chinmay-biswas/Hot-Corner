@@ -28,18 +28,18 @@ export const getNowPlayingMovies = async (req, res) => {
 // api to add a new show to the data base
 export const addShow=async(req,res)=>{
     try{
-            const {movieID,showsInput,showPrice}=req.body
-            let movie= await Movie.findById(movieID)
+            const {movieId,showsInput,showPrice}=req.body
+            let movie= await Movie.findById(movieId)
             if(!movie){
                 //fetch movie details and cast details
 
                 const [movieDetailsResponse, movieCreditsResponse] = await Promise.all([
-                    axios.get(`https://api.themoviedb.org/3/movie/${movieID}`,
+                    axios.get(`https://api.themoviedb.org/3/movie/${movieId}`,
                         {
         headers: {accept: 'application/json',
           Authorization: `Bearer ${process.env.TMDB_API_KEY}`}}),
         
-          axios.get(`https://api.themoviedb.org/3/movie/${movieID}/credits?language=en-US`,{
+          axios.get(`https://api.themoviedb.org/3/movie/${movieId}/credits?language=en-US`,{
         headers: {
             accept: 'application/json',
           Authorization: `Bearer ${process.env.TMDB_API_KEY}`}})
@@ -61,7 +61,7 @@ console.log("Filtered cast:", filteredCasts.length, filteredCasts[0]);
 
 
     const movieDetails={
-        _id:movieID,
+        _id:movieId,
         title:movieApiData.title ,
         overview: movieApiData.overview,
         poster_path: movieApiData.poster_path,
@@ -87,7 +87,7 @@ console.log("Filtered cast:", filteredCasts.length, filteredCasts[0]);
         show.time.forEach((time)=>{
             const dateTimeString = `${showDate}T${time}`;
             showsToCreate.push({
-                movie: movieID,
+                movie: movieId,
                 showDateTime : new Date(dateTimeString),
                 showPrice,
                 occupiedSeats:{}
