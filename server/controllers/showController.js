@@ -1,5 +1,6 @@
 import axios from 'axios';
 import Movie from '../models/Movie.js'; 
+import Show from '../models/Show.js';
 
 
 // api to get now playing movies from dmdb api
@@ -49,9 +50,46 @@ export const addShow=async(req,res)=>{
 
     const movieDetails={
         _id:movieID,
-    }
+        title:movieApiData.title ,
+        overview: movieApiData.overview,
+        poster_path: movieApiData.poster_path,
+        backdrop_path: movieApiData.backdrop_path,
+        original_language: movieApiData.original_language,
+        release_date:movieApiData.release_date,
+        genres: movieApiData.genres,
+        casts: movieApiData.cast,
+        vote_average:movieApiData.vote_average ,
+        runtime: movieApiData.runtime,
+        tagline: movieApiData.tagline || "",
+
+    } //add this in mongo db data base
+
+
+    movie = await Movie.create(movieDetails);
     
     }
+
+    const showsToCreate =[];
+    showsInput.forEach(show=>{
+        const showDate = show.date;
+        show.time.forEach((time)=>{
+            const dateTimeString = `${showDate}T${time}`;
+            showsToCreate.push({
+                movie: movieID,
+                showDateTime : new Date(dateTimeString),
+                showPrice,
+                occupiedSeats:{}
+
+            })
+        })
+    });
+
+
+    if(showsToCreate.length>0){
+        await Show.insertMany(showsToCreate);
+    }
+
+    res.json({success:true,message:'show added sucessfully'})
         
                      
 
