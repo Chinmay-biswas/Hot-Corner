@@ -34,3 +34,50 @@ export const getDashboardData = async(req,res )=>{
         
     }
 }
+
+
+//api to get all shows
+export const getAllShows= async (req,res)=>{
+
+
+
+
+    try {
+
+        const shows =await Show.find({
+            showDateTime:{$gte: new Date()}
+        }).populate('movie').sort({showDateTime:1})
+         res.json({success:true,shows})
+
+    } catch (error) {
+
+         console.log(error.message);
+        res.json({success:false,message:error.message})
+
+        
+    }}
+
+
+    //Api to get all bookings
+    export const getAllBookings = async (req,res)=>{
+
+        try {
+
+            const bookings = await Booking.find({}).populate('users').populate({
+                path:"show",
+                populate:{path:"movie"}
+            }).sort({createdAT : -1});
+
+
+            res.json({success:true, bookings});
+            
+        } 
+        
+        catch (error) {
+
+            console.log(error.message);
+            res.json({success:false,message:error.message});
+            
+        }
+
+    } 
