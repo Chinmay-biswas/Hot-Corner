@@ -4,6 +4,11 @@ import MoviesCard from '../components/MoviesCard'
 import BlurCircle from '../components/BlurCircle'
 
 const favorite = () => {
+
+
+
+
+  
   return dummyShowsData.length > 0 ?(
     <div className='relative my-40 mb-60 px-6 md:px-16 lg:px-30 overflow-hidden min-h-[80vh]'>
         <h1 className='text-lg font-medium my-4'>Your Favorite Movies</h1>
