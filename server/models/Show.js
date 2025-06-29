@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const showShema = new mongoose.Schema(
+const showSchema = new mongoose.Schema(
     {
         movie: {type:String, required:true,ref:'Movie'},
         showDateTime: {type:Date,required:true},
@@ -9,6 +9,6 @@ const showShema = new mongoose.Schema(
     },{minimize:false}
 )
 
-const Show =mongoose.model("Show",showShema);
+const Show = mongoose.model("Show",showSchema);
 
 export default Show;
