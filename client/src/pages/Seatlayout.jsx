@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { assets, dummyDateTimeData, dummyShowsData, } from '../assets/assets'
+import { assets,  } from '../assets/assets'
 import Loading from '../components/Loading'
 import { ArrowRightIcon, ClockIcon } from 'lucide-react'
 import isoTimeFormat from '../lib/isoTimeFormat'
@@ -102,8 +102,7 @@ const Seatlayout = () => {
       headers:{Authorization:`Bearer ${await getToken()}`}
     })
       if(data.success){
-        toast.success(data.message)
-        navigate('/my-bookings')
+        window.location.href=data.url;
       }else{
         toast.error(data.message)
       }

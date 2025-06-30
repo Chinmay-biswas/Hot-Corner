@@ -16,6 +16,7 @@ import ListShows from './pages/admin/ListShows'
 import AddShows from './pages/admin/AddShows'
 import { useAppContext } from './context/AppContext.jsx'
 import { SignIn } from '@clerk/clerk-react'
+import Loading from './components/Loading.jsx'
 
 
 
@@ -44,6 +45,8 @@ const { user} = useAppContext();
         <Route path='/movies/:id' element={<MovieDetails/>}/>
         <Route path='/movies/:id/:date' element={<Seatlayout/>}/> 
         <Route path='/my-bookings' element={<MyBookings/>}/> 
+        <Route path='/loading/:nextUrl' element={<Loading/>}/>
+
         <Route path='/favorites' element={<Favorites/>}/>
         <Route path="/admin/*" element={user ? <Layout/>:(<div className='min-h-screen flex justify-center items-center'>
           <SignIn fallbackRedirectUrl={'/admin'}/>
