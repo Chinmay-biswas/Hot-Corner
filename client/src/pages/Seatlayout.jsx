@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import {  useParams } from 'react-router-dom'
 import { assets,  } from '../assets/assets'
 import Loading from '../components/Loading'
 import { ArrowRightIcon, ClockIcon } from 'lucide-react'
@@ -19,7 +19,6 @@ const Seatlayout = () => {
   const[show, setShow]=useState(null)
   const[occupiedSeats, setOccupiedSeats] = useState([])
 
-  const navigate =useNavigate()
 
   const {axios,getToken,user}=useAppContext();
 

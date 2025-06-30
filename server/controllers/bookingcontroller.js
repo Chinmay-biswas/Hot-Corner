@@ -5,6 +5,7 @@ import Show from "../models/Show.js"
 import Booking from "../models/Booking.js";
 
 import  { Stripe } from 'stripe'
+import { inngest } from "../inngest/index.js";
 
 const checkSeatsAvailability = async (showId,selectedSeats)=>{
     try {
@@ -100,7 +101,14 @@ const session = await stripeInstance.checkout.sessions.create({
 booking.paymentLink= session.url
 await booking.save()
 
+//triggre the even to check pament sttus and relese seat if not
 
+await inngest.send({
+  name:"app/checkpayment",
+  data:{
+    bookingId:booking._id.toString()
+  }
+})
 
 
                 res.json({success:true, url:session.url})
