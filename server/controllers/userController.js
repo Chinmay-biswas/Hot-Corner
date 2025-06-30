@@ -31,37 +31,33 @@ console.log(error.message);
 
 //fav user list in clerk meta data Update
 
+export const UpdateFavorite = async (req, res) => {
+  try {
+    const { movieId } = req.body;
+    const userId = req.auth().userId;
 
-export const UpdateFavorite =async (req,res)=>{
-    try {
+    const user = await clerkClient.users.getUser(userId);
+    let favorites = user.privateMetadata.favorites || [];
 
-        const {movieId} =req.body;
-
-        const userId = req.auth().userId;
-
-        const user = await clerkClient.users.getUser(userId)
-
-       const favorites = user.privateMetadata.favorites || [];
-
-
-        if(!user.privateMetadata.favorites.includes(movieId)){
-            user.privateMetadata.favorites.push(movieId)
-        }else{
-            user.privateMetadata.favorites=user.privateMetadata.favorites.filter(item => item!==movieId)
-        }
-        await clerkClient.users.updateUserMetadata(userId,{privateMetadata:user.privateMetadata})
-
-        res.json({success:true,message:"favorite movies updated succesfully"})
-
-
-
-
-        
-    } catch (error) {console.log(error.message);
-        res.json({success:false,message:error.message});
-        
+    // Add or remove movieId
+    if (!favorites.includes(movieId)) {
+      favorites.push(movieId);
+    } else {
+      favorites = favorites.filter(item => item !== movieId);
     }
-}
+
+    // Save updated metadata
+    await clerkClient.users.updateUserMetadata(userId, {
+      privateMetadata: { favorites },
+    });
+
+    res.json({ success: true, message: "Favorite movies updated successfully" });
+
+  } catch (error) {
+    console.log(error.message);
+    res.json({ success: false, message: error.message });
+  }
+};
 
 
 //list of favrait movies 

@@ -40,14 +40,14 @@ export const createBooking = async(req,res)=>{
 
         // check seats are available for selected show
 
-        const isAvailable = await checkSeatsAvailability(showId,selectedSeats)
+        const isAvailable = await checkSeatsAvailability(showId,selectedSeats);
 
         if(!isAvailable){
             return res.json({success:false,message:"Selected seats are not available"})
         }
         //get the show details
 
-        const showData = awaitShow.findById(showId).populate('movie');
+        const showData = await Show.findById(showId).populate('movie');
 
         //create a new bookings
 
@@ -94,7 +94,7 @@ export const getOccupiedSeats =async (req,res)=>{
 
             const occupiedSeats= Object.keys(showData.occupiedSeats)
 
-            res.json ({ success:true , message:occupiedSeats})
+            res.json ({ success:true , occupiedSeats})
         
     } 
     
