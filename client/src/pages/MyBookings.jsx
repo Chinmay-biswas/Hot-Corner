@@ -4,10 +4,13 @@ import BlurCircle from '../components/BlurCircle'
 import { dummyBookingData } from '../assets/assets'
 import timeFormat from '../lib/timeFormat'
 import { dateFormat } from '../lib/dateFormat'
+import { useAppContext } from '../context/AppContext'
 
 const MyBookings = () => {
 
     const currency= import.meta.env.VITE_CURRENCY
+
+    const {axios,getToken,user,image_base_url}=useAppContext();
 
     const[bookings,setBookings] =useState([])
     const[isLoading, setIsLoading]=useState(true)
