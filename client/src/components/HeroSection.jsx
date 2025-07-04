@@ -7,8 +7,8 @@ const HeroSection = () => {
 
     const navigate =useNavigate()
 
-  return (
-    <div className='flex flex-col items-start justify-center gap-6 px-2 md:px-16 lg:px-36 bg-[url("/backgroundImage.png")]
+ /* return (
+    <div className='flex flex-col items-start justify-center gap-6 px-2 md:px-16 lg:px-36 bg-[url("/backgroundImage1.png")]
     bg-cover bg-center h-screen'>
         <img src={assets.marvelLogo} alt='' className='max-h-11 lg:h-11 mt-20'/>
         <h1 className='text-5xl md:text-[70px] md:leading-18 font-semibold max-w-110'>Gurdian <br/> of the Galaxy</h1>
@@ -27,7 +27,32 @@ const HeroSection = () => {
             <ArrowRight className='w-5 h-5'/>
         </button>
     </div>
+  )*/
+     
+  return (
+    <div className='flex flex-col items-start justify-center gap-6 px-2 md:px-16 lg:px-36 bg-[url("/backgroundImage.png")]
+    bg-cover bg-center h-screen'>
+        <img src={assets.batmanlogo} alt='' className='max-h-32 lg:h-32 mt-20 px-0'/>
+        <h1 className='text-5xl md:text-[70px] md:leading-18 font-semibold max-w-110 text-black'>The Batman </h1>
+        <div className='flex item-center gap-4 text-black'>
+            <span>Action |Adventure |Thriller</span>
+            <div className='flex items-center gap-1'>
+                <CalendarIcon className='w-4.5 h-4.5'/> 2018
+            </div>
+            <div className='flex items-center gap-1'>
+                <ClockIcon className='w-4.5 h-4.5'/> 2h 8m
+            </div>
+        </div>
+        <p className='max-w-md text-black'>When a sadistic serial killer begins murdering key political figures in Gotham, the Batman is forced to investigate the city's hidden corruption and question his family's involvement.</p>
+        <button onClick={()=>navigate('/movies')} className='flex item-center gap-1 px-6 py-3 text-sm bg-primary hover:bg-primary-dull transition rounded-full font-medium cursor-pointer'>
+            Explore Movies 
+            <ArrowRight className='w-5 h-5'/>
+        </button>
+    </div>
   )
+
+
+
 }
 
 export default HeroSection

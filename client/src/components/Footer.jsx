@@ -1,12 +1,11 @@
-import React from 'react'
+
 import { assets } from '../assets/assets'
-import BlurCircle from './BlurCircle'
+
 
 const Footer = () => {
   return (
     <footer className="px-6  md:px-16 lg:px-36 mt-55 w-full text-gray-300">
-            <div className="flex flex-col md:flex-ro
-            w justify-between w-full gap-10 border-b border-gray-500 pb-14">
+            <div className="flex flex-col md:flex-row justify-between w-full gap-10 border-b border-gray-500 pb-14">
             
                 <div className="md:max-w-96">
                   
@@ -19,21 +18,21 @@ const Footer = () => {
                         <img src={assets.appStore} alt="app store" className="h-9 w-auto  rounded" />
                     </div>
                 </div>
-                <div className="flex-1 flex items-start md:justify-end gap-20 md:gap-40">
+                <div className="flex-1 flex items-start md:justify-end gap-20 md:gap-40 mt-40">
                     <div>
                         <h2 className="font-semibold mb-5">Company</h2>
                         <ul className="text-sm space-y-2">
-                            <li><a href="#">Home</a></li>
-                            <li><a href="#">About us</a></li>
-                            <li><a href="#">Contact us</a></li>
-                            <li><a href="#">Privacy policy</a></li>
+                            <li><a href="https://hot-corner.vercel.app/">Home</a></li>
+                            <li><a href="https://portfoliocjstudio-bw8n.vercel.app/">About us</a></li>
+                            <li><a href="https://portfoliocjstudio-bw8n.vercel.app/">Contact us</a></li>
+                            
                         </ul>
                     </div>
                     <div>
                         <h2 className="font-semibold mb-5">Get in touch</h2>
                         <div className="text-sm space-y-2">
-                            <p>+1-234-567-890</p>
-                            <p>contact@example.com</p>
+                            <p>+91-6398439263</p>
+                            <p>chinmaybiswas475@gmail.com</p>
                         </div>
                     </div>
                 </div>
