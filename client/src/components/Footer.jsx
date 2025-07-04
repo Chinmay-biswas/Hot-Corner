@@ -11,7 +11,7 @@ const Footer = () => {
                   
                     <img className="w-36 h-auto" src={assets.logo} alt="logo" />
                     <p className="mt-6 text-sm">
-                        Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book.
+                        I am Chinmay, a student at IIT Guwahati from the ECE 2023 batch. I'm passionate about full-stack web development using the MERN stack. I'm also an active member of the Game Development Club and the Cyber Security Club, where I explore my interests in creative coding, gameplay design, and digital security
                     </p>
                     <div className="flex items-center gap-2 mt-4">
                         <img src={assets.googlePlay} alt="google play" className="h-9 w-auto  rounded" />
