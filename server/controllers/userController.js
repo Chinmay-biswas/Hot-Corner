@@ -3,6 +3,46 @@
 import { clerkClient } from "@clerk/express";
 import Booking from "../models/Booking.js";
 import Movie from "../models/Movie.js";
+import User from "../models/User.js";
+import Show from "../models/Show.js";
+
+export const syncCurrentUser = async (req, res) => {
+  try {
+    const userId = req.auth().userId;
+    const user = await clerkClient.users.getUser(userId);
+
+    const userData = {
+      _id: user.id,
+      email: user.emailAddresses?.[0]?.emailAddress || "",
+      phone: user.phoneNumbers?.[0]?.phoneNumber || "",
+      name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || "User",
+      image: user.imageUrl || "",
+    };
+
+    await User.findByIdAndUpdate(user.id, userData, { upsert: true, new: true });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.log(error.message);
+    res.json({ success: false, message: error.message });
+  }
+};
+
+export const trackUserTime = async (req, res) => {
+  try {
+    const userId = req.auth().userId;
+    const seconds = Math.min(Math.max(Number(req.body.seconds) || 0, 0), 300);
+
+    if (seconds > 0) {
+      await User.findByIdAndUpdate(userId, { $inc: { totalTimeSpent: seconds } });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.log(error.message);
+    res.json({ success: false, message: error.message });
+  }
+};
 
 export const getUserBookings = async (req,res)=>{
 
@@ -14,7 +54,28 @@ try {
         populate: {path: "movie"}
     }).sort({createdAt : -1})
 
-    res.json({success:true,bookings})
+    const now = new Date();
+        const expiredUnpaidBookings = bookings.filter(
+            (booking) => !booking.isPaid && booking.show?.showDateTime < now
+        );
+    
+        await Promise.all(expiredUnpaidBookings.map(async (booking) => {
+            const show = await Show.findById(booking.show._id);
+            if (show) {
+                booking.bookedSeats.forEach((seat) => {
+                    delete show.occupiedSeats[seat];
+                });
+                show.markModified('occupiedSeats');
+                await show.save();
+            }
+            await Booking.findByIdAndDelete(booking._id);
+        }));
+    
+        const activeBookings = bookings.filter(
+            (booking) => booking.isPaid || booking.show?.showDateTime >= now
+        );
+    
+        res.json({success:true,bookings: activeBookings})
 
 } 
 

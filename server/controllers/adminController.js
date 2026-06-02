@@ -86,3 +86,39 @@ export const getAllShows= async (req,res)=>{
         }
 
     } 
+    
+    export const getAllUsers = async (req,res)=>{
+    try {
+        const users = await Users.find({}).sort({createdAt:-1});
+        const paidBookings = await Booking.find({isPaid:true}).sort({createdAt:-1});
+
+        const paymentMap = new Map();
+        const phoneMap = new Map();
+        const emailMap = new Map();
+        paidBookings.forEach((booking)=>{
+            const userId = booking.user?.toString();
+            paymentMap.set(userId,(paymentMap.get(userId)||0)+booking.amount);
+            if(userId && booking.customerPhone && !phoneMap.has(userId)){
+                phoneMap.set(userId,booking.customerPhone);
+            }
+            if(userId && booking.customerEmail && !emailMap.has(userId)){
+                emailMap.set(userId,booking.customerEmail);
+            }
+        })
+
+        const usersData = users.map((user)=>({
+            _id:user._id,
+            name:user.name,
+            email:user.email || emailMap.get(user._id.toString()) || "",
+            phone:user.phone || phoneMap.get(user._id.toString()) || "",
+            totalPaid:paymentMap.get(user._id.toString()) || 0,
+            totalTimeSpent:user.totalTimeSpent || 0,
+            createdAt:user.createdAt
+        }))
+
+        res.json({success:true,users:usersData})
+    } catch (error) {
+        console.log(error.message);
+        res.json({success:false,message:error.message})
+    }
+}

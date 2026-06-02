@@ -7,6 +7,7 @@ import MovieDetails from './pages/MovieDetails'
 import Seatlayout from './pages/Seatlayout'
 import MyBookings from './pages/MyBookings'
 import Favorites from './pages/Favorites'
+//import Releases from './pages/Releases'
 import {Toaster} from 'react-hot-toast'
 import Footer from './components/Footer'
 import Dashboard from './pages/admin/Dashboard'
@@ -14,9 +15,11 @@ import Layout from './pages/admin/Layout'
 import ListBookings from './pages/admin/ListBookings'
 import ListShows from './pages/admin/ListShows'
 import AddShows from './pages/admin/AddShows'
+// import ListUsers from './pages/admin/ListUsers'
 import { useAppContext } from './context/AppContext.jsx'
 import { SignIn } from '@clerk/clerk-react'
 import Loading from './components/Loading.jsx'
+import Recommendation from './pages/Theaters.jsx'
 
 
 
@@ -48,6 +51,12 @@ const { user} = useAppContext();
         <Route path='/loading/:nextUrl' element={<Loading/>}/>
 
         <Route path='/favorites' element={<Favorites/>}/>
+         <Route path='/Recommendation' element={<Recommendation/>}/>
+        <Route path='/recommendation' element={<Recommendation/>}/>
+        <Route path='/Theaters' element={<Recommendation/>}/>
+        <Route path='/theaters' element={<Recommendation/>}/>
+       {/* <Route path='/Releases' element={<Releases/>}/>
+        <Route path='/releases' element={<Releases/>}/> */}
         <Route path="/admin/*" element={user ? <Layout/>:(<div className='min-h-screen flex justify-center items-center'>
           <SignIn fallbackRedirectUrl={'/admin'}/>
         </div>) }>
@@ -55,6 +64,7 @@ const { user} = useAppContext();
   <Route path="add-shows" element={<AddShows />} />
   <Route path="list-shows" element={<ListShows />} />
   <Route path="list-bookings" element={<ListBookings />} />
+  {/* <Route path="list-users" element={<ListUsers />} /> */}
 </Route>
 
 

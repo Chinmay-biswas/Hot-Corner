@@ -40,6 +40,7 @@ const fetchIsAdmin = async ()=>{
         
     } catch (error) {
         console.error(error)
+        setIsAdmin(false)
         
     }
 }
@@ -59,6 +60,28 @@ const fetchShows =async()=>{
     } catch (error) {
         console.error(error)
         
+    }
+}
+
+const syncCurrentUser = async()=>{
+    try {
+        await axios.post('/api/user/sync',{},{
+            headers:
+            {Authorization:`Bearer ${await getToken()}`}
+        })
+    } catch (error) {
+        console.error(error)
+    }
+}
+
+const trackUserTime = async(seconds)=>{
+    try {
+        await axios.post('/api/user/track-time',{seconds},{
+            headers:
+            {Authorization:`Bearer ${await getToken()}`}
+        })
+    } catch (error) {
+        console.error(error)
     }
 }
 
@@ -94,9 +117,26 @@ useEffect(()=>{
 },[])
 
 useEffect(()=>{
-    if(user){fetchIsAdmin()
+    if(user){
+        syncCurrentUser()
+        fetchIsAdmin()
         fetchFavoriteMovies()
+    }else{
+        setIsAdmin(false)
+        setFavoriteMovies([])
     }
+},[user])
+
+useEffect(()=>{
+    if(!user) return;
+
+    const interval = setInterval(()=>{
+        if(document.visibilityState === 'visible'){
+            trackUserTime(30)
+        }
+    },30000)
+
+    return ()=> clearInterval(interval)
 },[user])
 
 
