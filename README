@@ -1,0 +1,315 @@
+MOVIE TICKET BOOKING PROJECT - WORK FLOW OF THE PROJECT 
+
+====================================================
+1. APPLICATION ENTRY FLOW
+====================================================
+
+main.jsx
+  -> App.jsx
+      -> AppContext.jsx
+          -> Clerk Authentication
+          -> Axios Requests
+          -> Admin State
+          -> Favorites State
+          -> Shows Data
+
+====================================================
+2. FRONTEND ROUTING FLOW
+====================================================
+
+App.jsx
+│
+├── /
+│   └── Home.jsx
+│       ├── HeroSection.jsx
+│       ├── FeaturedSection.jsx
+│       ├── TrailersSection.jsx
+│       └── MoviesCard.jsx
+│
+├── /movies
+│   └── Movies.jsx
+│
+├── /movies/:id
+│   └── MovieDetails.jsx
+│       └── DateSelect.jsx
+│           └── navigate('/movies/:id/:date')
+│
+├── /movies/:id/:date
+│   └── Seatlayout.jsx
+│
+├── /my-bookings
+│   └── MyBookings.jsx
+│
+├── /favorites
+│   └── Favorites.jsx
+│
+├── /recommendation
+│   └── Theaters.jsx
+│
+└── /admin/*
+    ├── Dashboard.jsx
+    ├── AddShows.jsx
+    ├── ListShows.jsx
+    └── ListBookings.jsx
+
+====================================================
+3. SERVER STARTUP FLOW
+====================================================
+
+server.js
+│
+├── connectDB()
+├── clerkMiddleware()
+├── Stripe Webhook Route
+├── Inngest Route
+├── showRouter
+├── bookingRouter
+├── adminRouter
+├── userRouter
+└── recommendationRouter
+
+====================================================
+4. AUTHENTICATION FLOW
+====================================================
+
+User Login
+    ↓
+Clerk
+    ↓
+getToken()
+    ↓
+Axios Header
+    ↓
+Authorization: Bearer TOKEN
+    ↓
+Backend
+    ↓
+clerkMiddleware()
+    ↓
+req.auth()
+
+====================================================
+5. ADMIN FLOW
+====================================================
+
+Admin Page
+    ↓
+GET /api/admin/is-admin
+    ↓
+protectAdmin()
+    ↓
+Clerk User Lookup
+    ↓
+Role Check
+    ↓
+isAdmin()
+
+Dashboard
+    ↓
+GET /api/admin/dashboard
+    ↓
+getDashboardData()
+    ↓
+Booking Model
+    ↓
+Show Model
+    ↓
+User Model
+    ↓
+Dashboard Statistics
+
+====================================================
+6. MOVIE BOOKING FLOW
+====================================================
+
+Home.jsx
+    ↓
+MovieDetails.jsx
+    ↓
+DateSelect.jsx
+    ↓
+Book Now
+    ↓
+Seatlayout.jsx
+    ↓
+Select Seats
+    ↓
+POST /api/booking/create
+    ↓
+createBooking()
+    ↓
+Booking Model
+    ↓
+MongoDB
+
+====================================================
+7. PAYMENT FLOW
+====================================================
+
+Seatlayout.jsx
+    ↓
+Create Booking
+    ↓
+Stripe Checkout Session
+    ↓
+Stripe Payment Page
+    ↓
+User Pays
+    ↓
+Stripe Webhook
+    ↓
+stripeWebhooks.js
+    ↓
+booking.isPaid = true
+    ↓
+Inngest Event
+    ↓
+Confirmation Email
+
+====================================================
+8. INNGEST FLOW
+====================================================
+
+Booking Created
+    ↓
+app/checkpayment
+    ↓
+releaseSeatsAndDeleteBooking()
+    ↓
+Sleep 10 Minutes
+    ↓
+Booking.findById()
+    ↓
+isPaid ?
+
+YES
+ └── Keep Booking
+
+NO
+ ├── Show.findById()
+ ├── Release occupiedSeats
+ ├── show.save()
+ └── Delete Booking
+
+====================================================
+9. USER SYNC FLOW
+====================================================
+
+Clerk User Created
+    ↓
+webhook-integration/user.created
+    ↓
+syncUserCreation()
+    ↓
+User.create()
+
+Clerk User Updated
+    ↓
+webhook-integration/user.updated
+    ↓
+syncUserUpdate()
+    ↓
+User.findByIdAndUpdate()
+
+Clerk User Deleted
+    ↓
+webhook-integration/user.deleted
+    ↓
+syncUserDeletion()
+    ↓
+User.findByIdAndDelete()
+
+====================================================
+10. RECOMMENDATION SYSTEM FLOW
+====================================================
+
+Theaters.jsx
+    ↓
+/api/recommendations/search
+    ↓
+recommendationController.js
+    ↓
+Python Recommendation API
+    ↓
+Movie Suggestions
+
+Selected Movie
+    ↓
+/api/recommendations
+    ↓
+Python Model
+    ↓
+Recommended Movies
+    ↓
+TMDB API
+    ↓
+Poster + Overview
+    ↓
+Frontend
+
+====================================================
+11. DATABASE RELATIONSHIPS
+====================================================
+
+User
+│
+├── has many Bookings
+├── has Favorites
+└── has Time Tracking
+
+Booking
+│
+├── belongs to User
+├── belongs to Show
+└── stores Payment Status
+
+Show
+│
+├── belongs to Movie
+├── has occupiedSeats
+└── has showDateTime
+
+Movie
+│
+└── has many Shows
+
+====================================================
+12. ROUTER TO CONTROLLER MAP
+====================================================
+
+showRouter
+│
+├── /now-playing -> getNowPlayingMovies
+├── /add -> addShow
+├── /all -> getShows
+└── /:movieId -> getShow
+
+bookingRouter
+│
+├── /create -> createBooking
+└── /seats/:showId -> getOccupiedSeats
+
+adminRouter
+│
+├── /is-admin -> isAdmin
+├── /dashboard -> getDashboardData
+├── /all-shows -> getAllShows
+├── /all-bookings -> getAllBookings
+└── /all-users -> getAllUsers
+
+userRouter
+│
+├── /sync -> syncCurrentUser
+├── /track-time -> trackUserTime
+├── /bookings -> getUserBookings
+├── /update-favorite -> UpdateFavorite
+└── /favorites -> getFavorites
+
+recommendationRouter
+│
+├── /search -> searchRecommendationMovies
+└── / -> getMovieRecommendations
+
+====================================================
+END OF DOCUMENT
+====================================================
