@@ -1,3 +1,4 @@
+//A fully static, hardcoded hero banner for "The Batman" with a navigate button
 import React from 'react'
 import { assets } from '../assets/assets'
 import { ArrowRight, CalendarIcon, ClockIcon } from 'lucide-react'

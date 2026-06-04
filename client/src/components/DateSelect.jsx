@@ -1,3 +1,4 @@
+//Receives available show dates as props, lets user pick one, then navigates to the seat selection page.
 import React, { useState } from 'react'
 import BlurCircle from './BlurCircle'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'

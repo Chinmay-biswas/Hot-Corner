@@ -4,7 +4,7 @@ import { assets } from '../assets/assets'
 
 const Footer = () => {
   return (
-    <footer className="px-6  md:px-16 lg:px-36 mt-55 w-full text-gray-300">
+    <footer className="px-6  md:px-16 lg:px-36 mt-56 w-full text-gray-300">
             <div className="flex flex-col md:flex-row justify-between w-full gap-10 border-b border-gray-500 pb-14">
             
                 <div className="md:max-w-96">
@@ -38,7 +38,7 @@ const Footer = () => {
                 </div>
             </div>
             <p className="pt-4 text-center text-sm pb-5">
-                Copyright {new Date().getFullYear()} © CJ-Studio. All Right Reserved.
+                Copyright {new Date().getFullYear()} © CJ-Studio. All Rights Reserved.
             </p>
         </footer>
   )

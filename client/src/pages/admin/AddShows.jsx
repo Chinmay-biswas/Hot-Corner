@@ -1,3 +1,4 @@
+//Admin page to select a movie, set a price, pick multiple date+time slots, and create shows in the database.
 import React, { useEffect, useState } from 'react'
 import Loading from '../../components/Loading';
 import Title from '../../components/admin/Title';
@@ -68,9 +69,9 @@ const AddShows = () => {
       };
 
 
-      // handelSubmit submit function
+      // handleSubmit submit function
 
-      const handelSubmit = async()=>{
+      const handleSubmit = async()=>{
 try {
   setAddingShow(true)
 
@@ -214,7 +215,7 @@ setAddingShow(false)
 )}
 
 
-<button onClick={handelSubmit} disabled={addingShow} className='bg-primary text-white px-8 py-2 mt-6 rounded hover:bg-primary/70 transition-all cursor-pointer'>
+<button onClick={handleSubmit} disabled={addingShow} className='bg-primary text-white px-8 py-2 mt-6 rounded hover:bg-primary/70 transition-all cursor-pointer'>
   Add Show
 </button>
 

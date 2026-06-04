@@ -25,6 +25,7 @@ const genrretext = (genres = []) => {
     .join(' | ')
 }
 
+
 const RecommendationCard = ({ movie, showingMovie, imageBaseUrl, onDetails, onBook }) => {
   const image = gtmovie(movie, imageBaseUrl)
   const genres = genrretext(movie.genres)

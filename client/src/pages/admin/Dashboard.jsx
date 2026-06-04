@@ -1,3 +1,4 @@
+//Admin dashboard showing 4 stat cards (bookings, revenue, shows, users) and a grid of all active shows.
 import { ChartLineIcon, CircleDollarSignIcon, PlayCircleIcon, StarIcon, UsersIcon } from 'lucide-react';
 import React, { useEffect, useState } from 'react'
 

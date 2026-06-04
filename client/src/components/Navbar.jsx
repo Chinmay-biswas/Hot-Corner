@@ -1,4 +1,4 @@
-
+//A fixed responsive navbar with a mobile slide-in menu, dynamic links based on auth/admin state, and Clerk login/user button.
 import { Link, useNavigate } from 'react-router-dom'
 import { assets } from '../assets/assets'
 import { MenuIcon, SearchIcon, ShieldIcon, TicketPlus, XIcon } from "lucide-react";

@@ -1,3 +1,4 @@
+//A spinner component that also works as a timed redirect page after Stripe payment.
 import React, { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 

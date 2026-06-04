@@ -1,3 +1,5 @@
+//A reusable card component that displays one movie's info and navigates to its detail page on click.
+
 import { StarIcon } from 'lucide-react'
 import React from 'react'
 import { useNavigate } from 'react-router-dom'

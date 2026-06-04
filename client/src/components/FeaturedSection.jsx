@@ -1,3 +1,5 @@
+//Shows the first 9 currently showing movies in a grid with a "View All" and "Show More" button.
+
 import { ArrowRight } from 'lucide-react'
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -12,7 +14,7 @@ const FeaturedSection = () => {
     const {shows} = useAppContext();
 
   return (
-    <div className='px-6 md:px-16 lg:px-24 xl:px:44 overflow-hidden'>
+    <div className='px-6 md:px-16 lg:px-24 xl:px-44 overflow-hidden'>
         <div className='relative flex items-center justify-between pt-20 pb-10'>
             <BlurCircle top='0' right='-80px'/>
             <p className='text-gray-300 font-medium text-lg'>Now Showing</p>
@@ -22,12 +24,12 @@ const FeaturedSection = () => {
             </button>
         </div>
 
-        <div className='flex flex-wrap ma-sm:justify-center gap-14 mt-8'>
+        <div className='flex flex-wrap max-sm:justify-center gap-14 mt-8'>
             {shows.slice(0,9).map((show)=>(<MoviesCard key={show._id} movie={show}/>))}
         </div>
 
         <div className='flex justify-center mt-20'>
-        <button onClick={()=>{navigate("/Movies"); scrollTo(0, 0)}} className='px-10 py-3 text-sm bg-primary hover:bg-primary-dull transition rounded-md font-medium cursor-pointer'>Show More</button>
+        <button onClick={()=>{navigate("/movies"); scrollTo(0, 0)}} className='px-10 py-3 text-sm bg-primary hover:bg-primary-dull transition rounded-md font-medium cursor-pointer'>Show More</button>
         </div>
     </div>
   )

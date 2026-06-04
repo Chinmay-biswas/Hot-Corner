@@ -1,3 +1,5 @@
+//Shows a video player with a grid of trailer thumbnails — clicking a thumbnail swaps the video in the player.
+
 import React, { useState } from 'react'
 import { dummyTrailers } from '../assets/assets'
 import ReactPlayer from 'react-player'
@@ -22,11 +24,11 @@ const TrailersSection = () => {
         />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 mt-8 max-w-xs sm:max-w-3xl mx-auto">
+        <div className="group grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 mt-8 max-w-xs sm:max-w-3xl mx-auto">
 
 
             {dummyTrailers.map((trailer)=>(
-                <div key={trailer.image} className='relative group-hover:opacity-50 hover:opacity-100 hover:-translate-y-1 duration-300 transition max-md:h-60 md:max-h60 cursor-pointer' onClick={()=>setCurrentTrailer(trailer)}>
+                <div key={trailer.image} className='relative  group-hover:opacity-50 hover:opacity-100 hover:-translate-y-1 duration-300 transition max-md:h-60 md:max-h-60 cursor-pointer' onClick={()=>setCurrentTrailer(trailer)}>
 
                     <img src={trailer.image} alt="trailer" className='rounded-lg w-full h-full object-cover brightness-75'/>
                    
