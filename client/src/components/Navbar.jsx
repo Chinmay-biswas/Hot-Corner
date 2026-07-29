@@ -1,22 +1,110 @@
 
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { assets } from '../assets/assets'
 import { MenuIcon, SearchIcon, ShieldIcon, TicketPlus, XIcon } from "lucide-react";
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { UserButton, useUser,SignInButton } from '@clerk/clerk-react';
 import { useAppContext } from '../context/AppContextCore';
 
-const Navbar = () => {
+const AUTO_HIDE_DELAY_MS = 2600;
 
+const Navbar = () => {
   const {favoriteMovies,isAdmin}=useAppContext();
 
     const [isOpen ,setIsOpen] = useState(false)
+    const [autoHideEnabled, setAutoHideEnabled] = useState(false)
+    const [isVisible, setIsVisible] = useState(true)
+    const hideTimerRef = useRef(null)
+    const pointerOverNavbarRef = useRef(false)
     const{user}=useUser()
     const navigate =useNavigate()
+    const location = useLocation()
+    const shouldAutoHide = location.pathname === '/' || location.pathname.startsWith('/watch-together')
+
+    const clearHideTimer = useCallback(() => {
+      window.clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }, [])
+
+    const scheduleHide = useCallback(() => {
+      clearHideTimer()
+      if (!autoHideEnabled || pointerOverNavbarRef.current || isOpen) return
+
+      hideTimerRef.current = window.setTimeout(() => {
+        if (!pointerOverNavbarRef.current && !isOpen) setIsVisible(false)
+      }, AUTO_HIDE_DELAY_MS)
+    }, [autoHideEnabled, clearHideTimer, isOpen])
+
+    const revealNavbar = useCallback(() => {
+      if (!autoHideEnabled) return
+      setIsVisible(true)
+      if (!pointerOverNavbarRef.current) scheduleHide()
+    }, [autoHideEnabled, scheduleHide])
+
+    useEffect(() => {
+      if (!shouldAutoHide) {
+        clearHideTimer()
+        setAutoHideEnabled(false)
+        setIsVisible(true)
+        return undefined
+      }
+
+      const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)')
+      const updateAutoHideSupport = () => {
+        setAutoHideEnabled(mediaQuery.matches)
+        setIsVisible(true)
+      }
+
+      updateAutoHideSupport()
+      mediaQuery.addEventListener('change', updateAutoHideSupport)
+      return () => {
+        clearHideTimer()
+        mediaQuery.removeEventListener('change', updateAutoHideSupport)
+      }
+    }, [clearHideTimer, shouldAutoHide])
+
+    useEffect(() => {
+      if (!autoHideEnabled) return undefined
+
+      window.addEventListener('mousemove', revealNavbar, { passive: true })
+      scheduleHide()
+      return () => {
+        window.removeEventListener('mousemove', revealNavbar)
+        clearHideTimer()
+      }
+    }, [autoHideEnabled, clearHideTimer, revealNavbar, scheduleHide])
+
+    useEffect(() => {
+      if (isOpen) {
+        clearHideTimer()
+        setIsVisible(true)
+        return
+      }
+      scheduleHide()
+    }, [clearHideTimer, isOpen, scheduleHide])
+
+    const handleNavbarEnter = () => {
+      pointerOverNavbarRef.current = true
+      clearHideTimer()
+      setIsVisible(true)
+    }
+
+    const handleNavbarLeave = () => {
+      pointerOverNavbarRef.current = false
+      scheduleHide()
+    }
 
 
   return (
-    <div className='fixed top-0 left-0 z-50 w-full flex items-center justify-between px-6 md:px-16 lg:px-36 py-5'>
+    <div
+      onMouseEnter={handleNavbarEnter}
+      onMouseLeave={handleNavbarLeave}
+      onFocusCapture={handleNavbarEnter}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) handleNavbarLeave()
+      }}
+      className={`fixed top-0 left-0 z-50 w-full flex items-center justify-between px-6 md:px-16 lg:px-36 py-5 transition-[transform,opacity] duration-300 ease-out ${autoHideEnabled && !isVisible ? '-translate-y-[120%] opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'}`}
+    >
         <Link to='/' className='max-md:flex-1'>
         <img src={assets.logo} alt="" className='w-42 h-auto' />
         </Link>
