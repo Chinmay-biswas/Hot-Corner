@@ -1,5 +1,6 @@
 import stripe from "stripe";
 import Booking from '../models/Booking.js'
+import User from "../models/User.js";
 import { inngest } from "../inngest/index.js";
 
 export const stripeWebhooks = async (request, response) => {
@@ -29,10 +30,19 @@ export const stripeWebhooks = async (request, response) => {
             const session = sessionList.data[0];
             const{bookingId}=session.metadata;
 
-            await Booking.findByIdAndUpdate(bookingId,{
+            const booking = await Booking.findByIdAndUpdate(bookingId,{
                 isPaid:true,
-                paymentLink:''
-            })
+                paymentLink:'',
+                customerEmail: session.customer_details?.email || "",
+                customerPhone: session.customer_details?.phone || "",
+            },{new:true})
+
+            if(booking && session.customer_details?.phone){
+                await User.findByIdAndUpdate(booking.user,{
+                    phone: session.customer_details.phone,
+                    email: session.customer_details.email || undefined,
+                })
+            }
 
             //send mail
             await inngest.send({
@@ -50,7 +60,7 @@ export const stripeWebhooks = async (request, response) => {
     response.json({received:true})
 
   } catch (error) {
-    console.error("Webhook processing error:",err);
+    console.error("Webhook processing error:",error);
     response.status(500).send("internal server error");
     
   }

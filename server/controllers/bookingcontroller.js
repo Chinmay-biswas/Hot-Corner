@@ -3,6 +3,7 @@
 
 import Show from "../models/Show.js"
 import Booking from "../models/Booking.js";
+import User from "../models/User.js";
 
 import  { Stripe } from 'stripe'
 import { inngest } from "../inngest/index.js";
@@ -40,6 +41,7 @@ export const createBooking = async(req,res)=>{
         const {userId}=req.auth();
         const{showId,selectedSeats}= req.body;
         const {origin} = req.headers;
+        const userData = await User.findById(userId);
 
         // check seats are available for selected show
 
@@ -89,6 +91,10 @@ const session = await stripeInstance.checkout.sessions.create({
   payment_method_types: ['card'],
   mode: 'payment',
   line_items,
+  customer_email: userData?.email,
+  phone_number_collection: {
+    enabled: true,
+  },
   success_url: `${origin}/loading/my-bookings`,
   cancel_url: `${origin}/my-bookings`,
 
@@ -134,6 +140,10 @@ export const getOccupiedSeats =async (req,res)=>{
 
             const{showId} = req.params;
             const showData = await Show.findById(showId)
+
+            if(!showData){
+                return res.status(404).json({success:false,message:"Show not found"})
+            }
 
             const occupiedSeats= Object.keys(showData.occupiedSeats)
 

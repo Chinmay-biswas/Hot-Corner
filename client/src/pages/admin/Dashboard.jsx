@@ -1,12 +1,12 @@
 //Admin dashboard showing 4 stat cards (bookings, revenue, shows, users) and a grid of all active shows.
 import { ChartLineIcon, CircleDollarSignIcon, PlayCircleIcon, StarIcon, UsersIcon } from 'lucide-react';
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 
 import Loading from '../../components/Loading';
 import Title from '../../components/admin/Title';
 import BlurCircle from '../../components/BlurCircle';
 import { dateFormat } from '../../lib/dateFormat';
-import { useAppContext } from '../../context/AppContext';
+import { useAppContext } from '../../context/AppContextCore';
 import toast from 'react-hot-toast';
 
 
@@ -20,37 +20,39 @@ const [dashboardData, setDashboardData] = useState({
   totalBookings: 0,
   totalRevenue: 0,
   activeShows: [],
-  totalUser: 0
+  totalUsers: 0
 });
 
 const [loading, setLoading] = useState(true);
 
 const dashboardCards = [
   { title: "Total Bookings", value: dashboardData.totalBookings || "0", icon: ChartLineIcon },
-  { title: "Total Revenue", value: currency + dashboardData.totalRevenue || "0", icon: CircleDollarSignIcon },
+  { title: "Total Revenue", value: `${currency || ''}${dashboardData.totalRevenue || 0}`, icon: CircleDollarSignIcon },
   { title: "Active Shows", value: dashboardData.activeShows.length || "0", icon: PlayCircleIcon},
-  { title: "Total Users", value: dashboardData.totalUser || "0", icon: UsersIcon }
+  { title: "Total Users", value: dashboardData.totalUsers || dashboardData.totalUser || "0", icon: UsersIcon }
 ];
 
-const fetchDashboardData = async () => {
+const fetchDashboardData = useCallback(async () => {
  
   try {
+    setLoading(true)
     const {data}= await axios.get("/api/admin/dashboard",{
       headers:{Authorization:`Bearer ${await getToken()}`}
     })
    if(data.success){
             setDashboardData(data.dashboardData)
-            setLoading(false)
           }
           else{
             toast.error(data.message)
           }
       } catch (error) {
-        toast.error("Error fetching dashboard data:",error)
+        console.error(error)
+        toast.error("Error fetching dashboard data")
 
-        
+      } finally {
+        setLoading(false)
       }
-    };
+    }, [axios, getToken]);
 
 useEffect(() => {
 
@@ -58,7 +60,7 @@ useEffect(() => {
     fetchDashboardData();
   }
   
-}, [user]);
+}, [fetchDashboardData, user]);
 
 return !loading ?(
   <>
@@ -66,7 +68,7 @@ return !loading ?(
     <div className='relative flex flex-wrap gap-4 mt-6'> <BlurCircle top='-100px' left='0'/>
         <div className='relative flex flex-wrap lg:gap-4 xl:gap-10 w-full '>
             {dashboardCards.map((card, index)=>(
-            <div key={index} className='flex items-center justify-between px-4 py-3 mt-3 mr-3 bg-primary/20 boarder boarder-primary/30 rounded-md max-w-50 w-full'>
+            <div key={index} className='flex items-center justify-between px-4 py-3 mt-3 mr-3 bg-primary/20 border border-primary/30 rounded-md max-w-50 w-full'>
                 <div>
                     <h1 className='text-sm'>{card.title}</h1>
                     <p className='text-xl font-medium mt-1'>{card.value}</p>

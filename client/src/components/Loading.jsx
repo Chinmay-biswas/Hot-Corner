@@ -8,12 +8,14 @@ const {nextUrl} = useParams()
 const navigate = useNavigate()
 
 useEffect(()=>{
-if(nextUrl){
-  setTimeout(()=>{
+if(!nextUrl) return undefined;
+
+  const timeoutId = setTimeout(()=>{
     navigate('/'+ nextUrl)
   },9000)
-}
-},[])
+
+  return () => clearTimeout(timeoutId)
+},[navigate, nextUrl])
 
   return (
     <div className='flex justify-center items-center h-[40vh]'>

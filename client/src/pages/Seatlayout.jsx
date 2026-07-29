@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {  useParams } from 'react-router-dom'
 import { assets,  } from '../assets/assets'
 import Loading from '../components/Loading'
@@ -6,7 +6,7 @@ import { ArrowRightIcon, ClockIcon } from 'lucide-react'
 import isoTimeFormat from '../lib/isoTimeFormat'
 import BlurCircle from '../components/BlurCircle'
 import toast from 'react-hot-toast'
-import { useAppContext } from '../context/AppContext'
+import { useAppContext } from '../context/AppContextCore'
 
 const Seatlayout = () => {
 
@@ -22,7 +22,7 @@ const Seatlayout = () => {
 
   const {axios,getToken,user}=useAppContext();
 
-  const getShow =async () =>{
+  const getShow = useCallback(async () =>{
     try {
 
       const{data}= await axios.get(`/api/show/${id}`)
@@ -33,11 +33,11 @@ const Seatlayout = () => {
     } catch (error) {
       console.log(error)
     }
-  }
+  }, [axios, id])
 
   useEffect(()=>{
     getShow()
-  },[])
+  },[getShow])
 
   const handleSeatClick=(seatId)=>{
     if(!selectedTime){
@@ -75,7 +75,7 @@ const Seatlayout = () => {
 );
 
 
-    const getOccupiedSeats = async ()=>{
+    const getOccupiedSeats = useCallback(async ()=>{
       try {
         
         const {data} = await axios.get(`/api/booking/seats/${selectedTime.showId}`)
@@ -88,7 +88,7 @@ const Seatlayout = () => {
       } catch (error) {
         console.log(error)
       }
-    }
+    }, [axios, selectedTime])
 
 
       const bookTickets = async ()=>{
@@ -122,7 +122,9 @@ const Seatlayout = () => {
     if(selectedTime){
       getOccupiedSeats()
     }
-  },[selectedTime])
+  },[getOccupiedSeats, selectedTime])
+
+  const availableTimes = show?.dateTime?.[date] || []
 
   return show ? (
     <div className='flex flex-col md:flex-row px-6 md:px-16 lg:px-32 xl:px-50 py-30 md:pt-50'>
@@ -131,12 +133,21 @@ const Seatlayout = () => {
 
           <p className='text-lg font-semibold px-6'>Available Timings</p>
           <div className='mt-5 space-y-1'>
-          {show.dateTime[date].map((item)=>(
-            <div key={item.time} onClick={()=>(setSelectedTime(item))} className={`flex items-centre gap-2 px-6 py-2 rounded-r-md font-medium cursor-pointer transition ${selectedTime?.time=== item.time ? "bg-primary text-white":"hover:bg-primary/50"}`}>
+          {availableTimes.length > 0 ? availableTimes.map((item)=>(
+            <div
+              key={item.time}
+              onClick={()=>{
+                setSelectedTime(item)
+                setSelectedSeats([])
+              }}
+              className={`flex items-centre gap-2 px-6 py-2 rounded-r-md font-medium cursor-pointer transition ${selectedTime?.time=== item.time ? "bg-primary text-white":"hover:bg-primary/50"}`}
+            >
               <ClockIcon className='w-4 h-4 mt-2'/>
               <p className='text-sm py-1'>{isoTimeFormat(item.time)}</p>
             </div>
-          ))}
+          )) : (
+            <p className='px-6 text-sm text-gray-300'>No showtimes available for this date.</p>
+          )}
         </div>
         </div>
 

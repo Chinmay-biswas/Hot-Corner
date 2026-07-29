@@ -55,27 +55,27 @@ try {
     }).sort({createdAt : -1})
 
     const now = new Date();
-        const expiredUnpaidBookings = bookings.filter(
-            (booking) => !booking.isPaid && booking.show?.showDateTime < now
-        );
-    
-        await Promise.all(expiredUnpaidBookings.map(async (booking) => {
-            const show = await Show.findById(booking.show._id);
-            if (show) {
-                booking.bookedSeats.forEach((seat) => {
-                    delete show.occupiedSeats[seat];
-                });
-                show.markModified('occupiedSeats');
-                await show.save();
-            }
-            await Booking.findByIdAndDelete(booking._id);
-        }));
-    
-        const activeBookings = bookings.filter(
-            (booking) => booking.isPaid || booking.show?.showDateTime >= now
-        );
-    
-        res.json({success:true,bookings: activeBookings})
+    const expiredUnpaidBookings = bookings.filter(
+        (booking) => !booking.isPaid && booking.show?.showDateTime < now
+    );
+
+    await Promise.all(expiredUnpaidBookings.map(async (booking) => {
+        const show = await Show.findById(booking.show._id);
+        if (show) {
+            booking.bookedSeats.forEach((seat) => {
+                delete show.occupiedSeats[seat];
+            });
+            show.markModified('occupiedSeats');
+            await show.save();
+        }
+        await Booking.findByIdAndDelete(booking._id);
+    }));
+
+    const activeBookings = bookings.filter(
+        (booking) => booking.isPaid || booking.show?.showDateTime >= now
+    );
+
+    res.json({success:true,bookings: activeBookings})
 
 } 
 
@@ -127,7 +127,7 @@ export const UpdateFavorite = async (req, res) => {
 export const getFavorites = async (req, res) => {
     try {
         const user = await clerkClient.users.getUser(req.auth().userId)
-        const favorites = user.privateMetadata.favorites;
+        const favorites = user.privateMetadata.favorites || [];
 
         ///getting movies from data base
         const movies = await Movie.find({_id: {$in: favorites}})

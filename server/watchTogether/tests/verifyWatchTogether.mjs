@@ -1,0 +1,412 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import mongoose from "mongoose";
+import { Server as SocketIOServer } from "socket.io";
+import { io as createSocketClient } from "socket.io-client";
+import "dotenv/config";
+import connectDB from "../../configs/db.js";
+import User from "../../models/User.js";
+import WatchRoom from "../models/WatchRoom.js";
+import {
+  createWatchRoom,
+  getWatchRoom,
+  joinWatchRoom,
+  updateRoomController,
+  updateRoomMedia,
+  updateRoomPlayback,
+} from "../controllers/roomController.js";
+import { initializeWatchTogetherSocket } from "../socket/watchTogetherSocket.js";
+import {
+  extractYouTubeId,
+  getPlaybackTime,
+  MAX_GOOGLE_DRIVE_FILE_SIZE,
+} from "../../../client/src/features/watchTogether/lib/media.js";
+import { uploadGoogleDriveVideo } from "../../../client/src/features/watchTogether/lib/googleDrive.js";
+
+const runId = `WT${Date.now().toString(36).toUpperCase()}`.slice(0, 10);
+const userIds = {
+  host: `${runId}-HOST`,
+  guest: `${runId}-GUEST`,
+  outsider: `${runId}-OUTSIDER`,
+};
+
+const sampleYouTubeMedia = {
+  source: "youtube",
+  url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  title: "Integration test video",
+};
+
+const sampleDriveMedia = {
+  source: "drive",
+  driveFileId: "1AbCdEfGhIjKlmNopQrsTuv",
+  title: "Integration test Drive video",
+  url: "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlmNopQrsTuv",
+  mimeType: "video/mp4",
+};
+
+const invokeController = async (controller, { userId, params = {}, body = {} }) => {
+  let response;
+  const res = {
+    statusCode: 200,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(bodyValue) {
+      response = { statusCode: this.statusCode, body: bodyValue };
+      return bodyValue;
+    },
+  };
+  await controller({ auth: () => ({ userId }), params, body }, res);
+  assert.ok(response, "Controller did not return a JSON response.");
+  return response;
+};
+
+const waitForEvent = (socket, event, timeoutMs = 4000) => new Promise((resolve, reject) => {
+  const timeoutId = setTimeout(() => {
+    socket.off(event, onEvent);
+    reject(new Error(`Timed out waiting for ${event}.`));
+  }, timeoutMs);
+  const onEvent = (...args) => {
+    clearTimeout(timeoutId);
+    resolve(args.length === 1 ? args[0] : args);
+  };
+  socket.once(event, onEvent);
+});
+
+const emitWithAck = (socket, event, payload = {}) => new Promise((resolve, reject) => {
+  socket.timeout(4000).emit(event, payload, (timeoutError, response) => {
+    if (timeoutError) reject(timeoutError);
+    else resolve(response);
+  });
+});
+
+const closeSocket = (socket) => new Promise((resolve) => {
+  if (!socket?.connected) return resolve();
+  socket.once("disconnect", resolve);
+  socket.disconnect();
+});
+
+const listen = (server) => new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    server.off("error", reject);
+    resolve();
+  });
+});
+
+const closeServer = (server) => new Promise((resolve) => server.close(resolve));
+
+const connectSocket = async (url, token) => {
+  const socket = createSocketClient(url, {
+    auth: { token },
+    autoConnect: false,
+    forceNew: true,
+    transports: ["websocket"],
+  });
+  const connected = waitForEvent(socket, "connect");
+  socket.connect();
+  await connected;
+  return socket;
+};
+
+let httpServer;
+let socketServer;
+let hostSocket;
+let guestSocket;
+let outsiderSocket;
+let anonymousSocket;
+
+try {
+  assert.equal(extractYouTubeId("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(extractYouTubeId("https://www.youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(extractYouTubeId("not-a-youtube-link"), "");
+  const delayedPlayback = getPlaybackTime({
+    isPlaying: true,
+    currentTime: 10,
+    updatedAt: new Date(Date.now() - 2000).toISOString(),
+  });
+  assert.ok(delayedPlayback >= 11.5 && delayedPlayback <= 3 + 10, "Late-join playback time did not advance.");
+
+  const originalFetch = globalThis.fetch;
+  const driveRequests = [];
+  const testUploadFile = {
+    name: "room-video.mp4",
+    type: "video/mp4",
+    size: 9 * 1024 * 1024,
+    slice: (start, end) => new Blob([new Uint8Array(end - start)], { type: "video/mp4" }),
+  };
+  const uploadProgress = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    driveRequests.push({ url: requestUrl, options });
+    if (requestUrl.startsWith("https://www.googleapis.com/upload/drive/v3/files")) {
+      return new Response(null, { status: 200, headers: { location: "https://upload.example.test/session" } });
+    }
+    if (requestUrl === "https://upload.example.test/session") {
+      const contentRange = options.headers?.["Content-Range"];
+      if (contentRange.endsWith("/9437184") && contentRange.includes("0-8388607")) {
+        return new Response(null, { status: 308 });
+      }
+      return new Response(JSON.stringify({ id: "drive-upload-id" }), { status: 200 });
+    }
+    if (requestUrl.startsWith("https://www.googleapis.com/drive/v3/files/drive-upload-id")) {
+      return new Response(JSON.stringify({
+        id: "drive-upload-id",
+        name: "room-video.mp4",
+        mimeType: "video/mp4",
+        webContentLink: "https://drive.google.com/uc?export=download&id=drive-upload-id",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Drive request: ${requestUrl}`);
+  };
+  try {
+    const uploadedVideo = await uploadGoogleDriveVideo({
+      accessToken: "test-drive-token",
+      file: testUploadFile,
+      onProgress: (percent) => uploadProgress.push(percent),
+    });
+    assert.equal(uploadedVideo.id, "drive-upload-id");
+    assert.deepEqual(uploadProgress, [89, 100]);
+    assert.equal(driveRequests.filter(({ url }) => url === "https://upload.example.test/session").length, 2);
+    assert.equal(driveRequests[1].options.headers["Content-Range"], "bytes 0-8388607/9437184");
+    assert.equal(driveRequests[2].options.headers["Content-Range"], "bytes 8388608-9437183/9437184");
+    await assert.rejects(
+      uploadGoogleDriveVideo({
+        accessToken: "test-drive-token",
+        file: { name: "too-large.mp4", type: "video/mp4", size: MAX_GOOGLE_DRIVE_FILE_SIZE + 1 },
+      }),
+      /up to 5 GB/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  await connectDB();
+
+  await User.create([
+    { _id: userIds.host, name: "Watch Host", email: `${runId.toLowerCase()}-host@example.test`, image: "https://example.test/host.png" },
+    { _id: userIds.guest, name: "Watch Guest", email: `${runId.toLowerCase()}-guest@example.test`, image: "https://example.test/guest.png" },
+    { _id: userIds.outsider, name: "Watch Outsider", email: `${runId.toLowerCase()}-outsider@example.test`, image: "https://example.test/outsider.png" },
+  ]);
+
+  const rejectedCreate = await invokeController(createWatchRoom, {
+    userId: userIds.host,
+    body: { media: { source: "youtube", url: "not-a-youtube-link" } },
+  });
+  assert.equal(rejectedCreate.statusCode, 400);
+  assert.equal(rejectedCreate.body.success, false);
+
+  const created = await invokeController(createWatchRoom, {
+    userId: userIds.host,
+    body: { media: sampleYouTubeMedia, displayName: "Watch Host", image: "https://example.test/host.png" },
+  });
+  assert.equal(created.statusCode, 201);
+  assert.equal(created.body.success, true);
+  assert.equal(created.body.room.isHost, true);
+  assert.equal(created.body.room.canControl, true);
+  const roomCode = created.body.room.code;
+
+  const fetchedByGuest = await invokeController(getWatchRoom, {
+    userId: userIds.guest,
+    params: { roomCode },
+  });
+  assert.equal(fetchedByGuest.statusCode, 200);
+  assert.equal(fetchedByGuest.body.room.isHost, false);
+  assert.equal(fetchedByGuest.body.room.canControl, false);
+
+  const joinedByGuest = await invokeController(joinWatchRoom, {
+    userId: userIds.guest,
+    params: { roomCode },
+    body: { displayName: "Watch Guest" },
+  });
+  assert.equal(joinedByGuest.statusCode, 200);
+  assert.equal(joinedByGuest.body.profile.name, "Watch Guest");
+
+  const guestPlaybackDenied = await invokeController(updateRoomPlayback, {
+    userId: userIds.guest,
+    params: { roomCode },
+    body: { isPlaying: true, currentTime: 15 },
+  });
+  assert.equal(guestPlaybackDenied.statusCode, 403);
+
+  const grantedController = await invokeController(updateRoomController, {
+    userId: userIds.host,
+    params: { roomCode },
+    body: { userId: userIds.guest, allowed: true },
+  });
+  assert.equal(grantedController.statusCode, 200);
+  assert.equal(grantedController.body.canControl, true);
+
+  const guestPlaybackAllowed = await invokeController(updateRoomPlayback, {
+    userId: userIds.guest,
+    params: { roomCode },
+    body: { isPlaying: true, currentTime: 47.25 },
+  });
+  assert.equal(guestPlaybackAllowed.statusCode, 200);
+  assert.equal(guestPlaybackAllowed.body.room.playback.currentTime, 47.25);
+
+  const guestMediaDenied = await invokeController(updateRoomMedia, {
+    userId: userIds.guest,
+    params: { roomCode },
+    body: { media: sampleDriveMedia },
+  });
+  assert.equal(guestMediaDenied.statusCode, 403);
+
+  const hostMediaChanged = await invokeController(updateRoomMedia, {
+    userId: userIds.host,
+    params: { roomCode },
+    body: { media: sampleDriveMedia },
+  });
+  assert.equal(hostMediaChanged.statusCode, 200);
+  assert.equal(hostMediaChanged.body.room.media.source, "drive");
+  assert.equal(hostMediaChanged.body.room.playback.currentTime, 0);
+
+  const controllerRevoked = await invokeController(updateRoomController, {
+    userId: userIds.host,
+    params: { roomCode },
+    body: { userId: userIds.guest, allowed: false },
+  });
+  assert.equal(controllerRevoked.statusCode, 200);
+  assert.equal(controllerRevoked.body.canControl, false);
+
+  const guestPlaybackRevoked = await invokeController(updateRoomPlayback, {
+    userId: userIds.guest,
+    params: { roomCode },
+    body: { isPlaying: false, currentTime: 0 },
+  });
+  assert.equal(guestPlaybackRevoked.statusCode, 403);
+
+  const expiredRoom = await WatchRoom.create({
+    code: `EX${Date.now().toString().slice(-8)}`,
+    hostId: userIds.host,
+    hostName: "Watch Host",
+    controllers: [userIds.host],
+    media: { source: "youtube", title: "Expired", youtubeId: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+    playback: { isPlaying: false, currentTime: 0, updatedAt: new Date() },
+    expiresAt: new Date(Date.now() - 1000),
+  });
+  const expiredFetch = await invokeController(getWatchRoom, {
+    userId: userIds.host,
+    params: { roomCode: expiredRoom.code },
+  });
+  assert.equal(expiredFetch.statusCode, 404);
+
+  httpServer = createServer();
+  socketServer = new SocketIOServer(httpServer, { cors: { origin: true } });
+  const tokenOwners = new Map([
+    ["host-token", userIds.host],
+    ["guest-token", userIds.guest],
+    ["outsider-token", userIds.outsider],
+  ]);
+  initializeWatchTogetherSocket(socketServer, {
+    verifyTokenFn: async (token) => {
+      const userId = tokenOwners.get(token);
+      if (!userId) throw new Error("Invalid token");
+      return { sub: userId };
+    },
+  });
+  await listen(httpServer);
+  const address = httpServer.address();
+  const socketUrl = `http://127.0.0.1:${address.port}`;
+
+  anonymousSocket = createSocketClient(socketUrl, { autoConnect: false, forceNew: true, transports: ["websocket"] });
+  const anonymousErrorEvent = waitForEvent(anonymousSocket, "connect_error");
+  anonymousSocket.connect();
+  const anonymousError = await anonymousErrorEvent;
+  assert.equal(anonymousError.message, "Authentication is required.");
+  anonymousSocket.disconnect();
+
+  hostSocket = await connectSocket(socketUrl, "host-token");
+  guestSocket = await connectSocket(socketUrl, "guest-token");
+  outsiderSocket = await connectSocket(socketUrl, "outsider-token");
+
+  const hostJoin = await emitWithAck(hostSocket, "watch:join", { roomCode, displayName: "Socket Host" });
+  assert.equal(hostJoin.ok, true);
+  assert.equal(hostJoin.room.isHost, true);
+
+  const participantUpdate = waitForEvent(hostSocket, "watch:participants");
+  const guestJoin = await emitWithAck(guestSocket, "watch:join", { roomCode, displayName: "Socket Guest" });
+  assert.equal(guestJoin.ok, true);
+  assert.equal(guestJoin.room.canControl, false);
+  const participants = await participantUpdate;
+  assert.equal(participants.length, 2);
+
+  const socketGuestPlaybackDenied = await emitWithAck(guestSocket, "watch:playback", { isPlaying: true, currentTime: 12 });
+  assert.equal(socketGuestPlaybackDenied.ok, false);
+
+  const guestPermissionEvent = waitForEvent(guestSocket, "watch:permission-changed");
+  const socketGrant = await emitWithAck(hostSocket, "watch:controller", { userId: userIds.guest, allowed: true });
+  assert.equal(socketGrant.ok, true);
+  assert.equal((await guestPermissionEvent).canControl, true);
+
+  const hostPlaybackEvent = waitForEvent(hostSocket, "watch:playback");
+  const socketGuestPlayback = await emitWithAck(guestSocket, "watch:playback", { isPlaying: true, currentTime: 76.5 });
+  assert.equal(socketGuestPlayback.ok, true);
+  assert.equal((await hostPlaybackEvent).playback.currentTime, 76.5);
+
+  const guestChatEvent = waitForEvent(hostSocket, "watch:chat");
+  const socketChat = await emitWithAck(guestSocket, "watch:chat", { text: "  Hello   from  the room  " });
+  assert.equal(socketChat.ok, true);
+  assert.equal((await guestChatEvent).text, "Hello from the room");
+
+  const socketBlankChat = await emitWithAck(guestSocket, "watch:chat", { text: "   " });
+  assert.equal(socketBlankChat.ok, false);
+
+  const socketGuestMediaDenied = await emitWithAck(guestSocket, "watch:media", { media: sampleYouTubeMedia });
+  assert.equal(socketGuestMediaDenied.ok, false);
+
+  const guestMediaEvent = waitForEvent(guestSocket, "watch:media");
+  const socketHostMedia = await emitWithAck(hostSocket, "watch:media", { media: sampleYouTubeMedia });
+  assert.equal(socketHostMedia.ok, true);
+  assert.equal((await guestMediaEvent).room.media.source, "youtube");
+
+  const guestCallState = waitForEvent(guestSocket, "watch:call-state");
+  const hostCall = await emitWithAck(hostSocket, "watch:call-join");
+  assert.equal(hostCall.ok, true);
+  assert.equal(hostCall.existingSockets.length, 0);
+  assert.equal((await guestCallState).active, true);
+
+  const hostParticipantJoined = waitForEvent(hostSocket, "watch:call-participant-joined");
+  const guestCall = await emitWithAck(guestSocket, "watch:call-join");
+  assert.equal(guestCall.ok, true);
+  assert.deepEqual(guestCall.existingSockets, [hostSocket.id]);
+  assert.equal((await hostParticipantJoined).socketId, guestSocket.id);
+
+  const hostSignal = waitForEvent(hostSocket, "watch:webrtc-signal");
+  const signalForwarded = await emitWithAck(guestSocket, "watch:webrtc-signal", {
+    to: hostSocket.id,
+    signal: { type: "offer", sdp: "test-sdp" },
+  });
+  assert.equal(signalForwarded.ok, true);
+  assert.equal((await hostSignal).signal.sdp, "test-sdp");
+
+  const outsiderJoin = await emitWithAck(outsiderSocket, "watch:join", { roomCode, displayName: "Socket Outsider" });
+  assert.equal(outsiderJoin.ok, true);
+  const outsiderSignal = await emitWithAck(outsiderSocket, "watch:webrtc-signal", {
+    to: hostSocket.id,
+    signal: { type: "offer", sdp: "blocked" },
+  });
+  assert.equal(outsiderSignal.ok, false);
+
+  const hostCallLeave = waitForEvent(hostSocket, "watch:call-participant-left");
+  const guestLeave = await emitWithAck(guestSocket, "watch:call-leave");
+  assert.equal(guestLeave.ok, true);
+  assert.equal((await hostCallLeave).socketId, guestSocket.id);
+  const hostLeave = await emitWithAck(hostSocket, "watch:call-leave");
+  assert.equal(hostLeave.ok, true);
+
+  console.log("Watch Together verification passed: API permissions, media validation, socket sync, chat, and call signaling.");
+} finally {
+  await Promise.all([
+    closeSocket(hostSocket),
+    closeSocket(guestSocket),
+    closeSocket(outsiderSocket),
+    closeSocket(anonymousSocket),
+  ]);
+  if (socketServer) await new Promise((resolve) => socketServer.close(resolve));
+  if (httpServer?.listening) await closeServer(httpServer);
+  await WatchRoom.deleteMany({ hostId: { $in: Object.values(userIds) } });
+  await User.deleteMany({ _id: { $in: Object.values(userIds) } });
+  await mongoose.disconnect();
+}
