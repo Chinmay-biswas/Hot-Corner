@@ -66,7 +66,7 @@ const copyText = async (value) => {
   if (!copied) throw new Error("Copy is not available in this browser.");
 };
 
-const pageShell = "min-h-screen px-6 md:px-16 lg:px-24 xl:px-36 pt-38 pb-20";
+const pageShell = "min-h-screen px-6 md:px-16 lg:px-24 xl:px-36 pt-48 pb-20";
 
 const SignInRequired = () => (
   <main className={`${pageShell} flex items-center justify-center`}>
