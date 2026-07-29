@@ -1,24 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactPlayer from "react-player";
 import { Expand, FastForward, Pause, Play, Rewind, Volume2 } from "lucide-react";
-import { formatPlaybackTime, getPlaybackTime } from "../lib/media";
+import { formatPlaybackTime, getPlaybackSyncPlan } from "../lib/media";
+
+const REMOTE_EVENT_SUPPRESSION_MS = 1200;
+const DRIFT_CHECK_INTERVAL_MS = 1000;
 
 const MediaStage = ({ room, onPlayback }) => {
   const playerRef = useRef(null);
   const driveVideoRef = useRef(null);
   const stageRef = useRef(null);
-  const applyingSyncRef = useRef(false);
-  const lastRemoteSyncRef = useRef(0);
+  const suppressUntilRef = useRef(0);
   const lastHeartbeatRef = useRef(0);
+  const lastPlaybackStateRef = useRef(null);
+  const lastReportedActionRef = useRef({ key: "", sentAt: 0 });
+  const scrubbingRef = useRef(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(0.85);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [driveFallback, setDriveFallback] = useState(false);
   const [error, setError] = useState("");
 
   const media = room.media;
   const isYoutube = media.source === "youtube";
-  const canControl = room.canControl && !driveFallback;
+  const canControl = room.isHost && !driveFallback;
   const playback = room.playback;
 
   const getCurrentTime = useCallback(() => {
@@ -26,80 +32,132 @@ const MediaStage = ({ room, onPlayback }) => {
     return Number(driveVideoRef.current?.currentTime || 0);
   }, [isYoutube]);
 
-  const applyPlayback = useCallback(() => {
-    const targetTime = getPlaybackTime(playback);
-    applyingSyncRef.current = true;
-    lastRemoteSyncRef.current = Date.now();
-    setCurrentTime(targetTime);
+  const suppressLocalEvents = useCallback(() => {
+    suppressUntilRef.current = Math.max(suppressUntilRef.current, Date.now() + REMOTE_EVENT_SUPPRESSION_MS);
+  }, []);
 
-    if (isYoutube) {
-      const player = playerRef.current;
-      if (player && Math.abs(Number(player.getCurrentTime?.() || 0) - targetTime) > 0.75) {
-        player.seekTo(targetTime, "seconds");
-      }
-    } else {
-      const video = driveVideoRef.current;
-      if (video) {
-        if (Math.abs(video.currentTime - targetTime) > 0.75) video.currentTime = targetTime;
-        if (playback.isPlaying) {
-          video.play().catch(() => setError("Press play once to allow this browser to start the Drive video."));
-        } else {
-          video.pause();
-        }
-      }
+  const setLocalPlaybackRate = useCallback((nextRate) => {
+    const normalizedRate = nextRate === 1.5 || nextRate === 0.75 ? nextRate : 1;
+    setPlaybackRate((current) => current === normalizedRate ? current : normalizedRate);
+
+    const video = driveVideoRef.current;
+    if (video && Math.abs(video.playbackRate - normalizedRate) > 0.01) {
+      video.playbackRate = normalizedRate;
+    }
+  }, []);
+
+  const syncPlayback = useCallback((forceSync = false) => {
+    const plan = getPlaybackSyncPlan({
+      playback,
+      localTime: getCurrentTime(),
+      duration,
+      forceSync,
+    });
+    const playbackStateChanged = lastPlaybackStateRef.current !== playback.isPlaying;
+    lastPlaybackStateRef.current = playback.isPlaying;
+    setLocalPlaybackRate(plan.playbackRate);
+
+    if (plan.shouldSeek || playbackStateChanged) suppressLocalEvents();
+
+    if (plan.shouldSeek) {
+      setCurrentTime(plan.targetTime);
+      if (isYoutube) playerRef.current?.seekTo(plan.targetTime, "seconds");
+      else if (driveVideoRef.current) driveVideoRef.current.currentTime = plan.targetTime;
     }
 
-    const timeoutId = window.setTimeout(() => { applyingSyncRef.current = false; }, 700);
-    return () => window.clearTimeout(timeoutId);
-  }, [isYoutube, playback]);
+    if (!isYoutube) {
+      const video = driveVideoRef.current;
+      if (!video) return;
+
+      if (playback.isPlaying && video.paused) {
+        video.play().catch(() => setError("Interact with the Drive video once to allow playback in this browser."));
+      } else if (!playback.isPlaying && !video.paused) {
+        video.pause();
+      }
+    }
+  }, [duration, getCurrentTime, isYoutube, playback, setLocalPlaybackRate, suppressLocalEvents]);
 
   useEffect(() => {
     setDriveFallback(false);
     setDuration(0);
     setCurrentTime(0);
+    setPlaybackRate(1);
+    lastPlaybackStateRef.current = null;
   }, [media.url]);
 
-  useEffect(() => applyPlayback(), [applyPlayback]);
+  useEffect(() => {
+    syncPlayback(Boolean(playback.forceSync));
+  }, [playback.forceSync, playback.updatedAt, syncPlayback]);
+
+  useEffect(() => {
+    if (!playback.isPlaying) return undefined;
+
+    const intervalId = window.setInterval(() => syncPlayback(false), DRIFT_CHECK_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [playback.isPlaying, syncPlayback]);
 
   useEffect(() => {
     const video = driveVideoRef.current;
     if (video) video.volume = volume;
   }, [volume, media.url]);
 
-  const reportPlayback = useCallback(async (isPlaying, time = getCurrentTime()) => {
-    if (!canControl || applyingSyncRef.current || Date.now() - lastRemoteSyncRef.current < 850) return;
+  const reportPlayback = useCallback(async ({ isPlaying, time = getCurrentTime(), forceSync = false }) => {
+    if (!canControl || Date.now() < suppressUntilRef.current) return;
+
+    const currentTimeValue = Math.max(0, Number(time || 0));
+    const actionKey = `${isPlaying}:${currentTimeValue.toFixed(2)}:${forceSync}`;
+    const now = Date.now();
+    if (lastReportedActionRef.current.key === actionKey && now - lastReportedActionRef.current.sentAt < 250) return;
+
+    lastReportedActionRef.current = { key: actionKey, sentAt: now };
     try {
-      await onPlayback({ isPlaying, currentTime: Math.max(0, Number(time || 0)) });
+      await onPlayback({ isPlaying, currentTime: currentTimeValue, forceSync });
       setError("");
     } catch (playbackError) {
       setError(playbackError.message || "Playback could not be synchronized.");
     }
   }, [canControl, getCurrentTime, onPlayback]);
 
-  const seek = useCallback((nextTime) => {
+  const movePlayerTo = useCallback((nextTime) => {
     const targetTime = Math.max(0, Math.min(Number(nextTime), duration || Number.MAX_SAFE_INTEGER));
-    if (!canControl) return;
-
     if (isYoutube) playerRef.current?.seekTo(targetTime, "seconds");
     else if (driveVideoRef.current) driveVideoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
-    reportPlayback(playback.isPlaying, targetTime);
-  }, [canControl, duration, isYoutube, playback.isPlaying, reportPlayback]);
+    return targetTime;
+  }, [duration, isYoutube]);
+
+  const seek = useCallback((nextTime) => {
+    if (!canControl) return;
+    const targetTime = movePlayerTo(nextTime);
+    lastHeartbeatRef.current = Date.now();
+    reportPlayback({ isPlaying: playback.isPlaying, time: targetTime, forceSync: true });
+  }, [canControl, movePlayerTo, playback.isPlaying, reportPlayback]);
+
+  const previewSeek = useCallback((nextTime) => {
+    if (!canControl) return;
+    movePlayerTo(nextTime);
+  }, [canControl, movePlayerTo]);
+
+  const finishScrubbing = useCallback((event) => {
+    if (!scrubbingRef.current) return;
+    scrubbingRef.current = false;
+    seek(event.currentTarget.value);
+  }, [seek]);
 
   const reportProgress = useCallback((time) => {
     setCurrentTime(time);
     if (
       canControl
       && playback.isPlaying
+      && !scrubbingRef.current
       && Date.now() - lastHeartbeatRef.current > 8000
-      && Date.now() - lastRemoteSyncRef.current > 1500
     ) {
       lastHeartbeatRef.current = Date.now();
-      reportPlayback(true, time);
+      reportPlayback({ isPlaying: true, time });
     }
   }, [canControl, playback.isPlaying, reportPlayback]);
 
-  const togglePlay = () => reportPlayback(!playback.isPlaying);
+  const togglePlay = () => reportPlayback({ isPlaying: !playback.isPlaying });
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) stageRef.current?.requestFullscreen?.();
@@ -113,8 +171,8 @@ const MediaStage = ({ room, onPlayback }) => {
           <h1 className="truncate text-base font-medium">{media.title}</h1>
           <p className="text-xs text-gray-500 mt-0.5">{isYoutube ? "YouTube" : "Google Drive"}</p>
         </div>
-        <span className={`text-xs ${room.canControl ? "text-primary" : "text-gray-500"}`}>
-          {room.canControl ? "Shared controls" : "Host controls"}
+        <span className={`text-xs ${room.isHost ? "text-primary" : "text-gray-500"}`}>
+          {room.isHost ? "You control playback" : "Room creator controls"}
         </span>
       </div>
 
@@ -124,17 +182,17 @@ const MediaStage = ({ room, onPlayback }) => {
             ref={playerRef}
             url={media.url}
             playing={Boolean(playback.isPlaying)}
+            playbackRate={playbackRate}
             volume={volume}
             width="100%"
             height="100%"
             className="absolute inset-0"
             controls={false}
-            onReady={applyPlayback}
+            onReady={() => syncPlayback(Boolean(playback.forceSync))}
             onDuration={setDuration}
             onProgress={({ playedSeconds }) => reportProgress(playedSeconds)}
-            onPlay={() => reportPlayback(true)}
-            onPause={() => reportPlayback(false)}
-            onSeek={(seconds) => reportPlayback(playback.isPlaying, seconds)}
+            onPlay={() => reportPlayback({ isPlaying: true })}
+            onPause={() => reportPlayback({ isPlaying: false })}
             onError={() => setError("This YouTube video cannot be played in an embedded room.")}
           />
         ) : driveFallback ? (
@@ -154,12 +212,11 @@ const MediaStage = ({ room, onPlayback }) => {
             preload="metadata"
             onLoadedMetadata={(event) => {
               setDuration(event.currentTarget.duration || 0);
-              applyPlayback();
+              syncPlayback(Boolean(playback.forceSync));
             }}
             onTimeUpdate={(event) => reportProgress(event.currentTarget.currentTime)}
-            onPlay={() => reportPlayback(true)}
-            onPause={() => reportPlayback(false)}
-            onSeeked={(event) => reportPlayback(playback.isPlaying, event.currentTarget.currentTime)}
+            onPlay={() => reportPlayback({ isPlaying: true })}
+            onPause={() => reportPlayback({ isPlaying: false })}
             onError={() => {
               setDriveFallback(true);
               setError("Google Drive opened its preview because this file could not stream directly.");
@@ -209,7 +266,15 @@ const MediaStage = ({ room, onPlayback }) => {
           max={Math.max(duration, 1)}
           step="0.1"
           value={Math.min(currentTime, Math.max(duration, 1))}
-          onChange={(event) => seek(event.target.value)}
+          onPointerDown={() => { scrubbingRef.current = true; }}
+          onPointerUp={finishScrubbing}
+          onPointerCancel={finishScrubbing}
+          onKeyDown={() => { scrubbingRef.current = true; }}
+          onKeyUp={finishScrubbing}
+          onChange={(event) => {
+            previewSeek(event.target.value);
+            if (!scrubbingRef.current) seek(event.target.value);
+          }}
           disabled={!canControl}
           aria-label="Playback position"
           className="w-full accent-primary disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"

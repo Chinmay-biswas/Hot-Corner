@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Crown, ShieldCheck, ShieldOff, UsersRound } from "lucide-react";
+import { Crown, UsersRound } from "lucide-react";
 
 const initials = (name) => String(name || "Movie fan")
   .split(" ")
@@ -17,18 +16,7 @@ const Avatar = ({ participant }) => participant.image ? (
   </span>
 );
 
-const ParticipantsPanel = ({ participants, currentUserId, isHost, onToggleControl }) => {
-  const [changingUserId, setChangingUserId] = useState("");
-
-  const toggleControl = async (participant) => {
-    setChangingUserId(participant.userId);
-    try {
-      await onToggleControl(participant.userId, !participant.canControl);
-    } finally {
-      setChangingUserId("");
-    }
-  };
-
+const ParticipantsPanel = ({ participants, currentUserId }) => {
   return (
     <section className="border border-white/10 bg-white/[0.025] rounded-lg overflow-hidden">
       <div className="h-12 px-4 flex items-center justify-between border-b border-white/10">
@@ -38,29 +26,16 @@ const ParticipantsPanel = ({ participants, currentUserId, isHost, onToggleContro
       <div className="max-h-58 overflow-y-auto divide-y divide-white/8">
         {participants.length ? participants.map((participant) => {
           const isCurrentUser = participant.userId === currentUserId;
-          const canManage = isHost && !participant.isHost && !isCurrentUser;
           return (
             <div key={participant.socketId || participant.userId} className="min-h-14 px-4 py-2 flex items-center gap-3">
               <Avatar participant={participant} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm">{isCurrentUser ? "You" : participant.name}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">
-                  {participant.isHost ? "Room creator" : participant.canControl ? "Shared controls" : "Watching"}
+                  {participant.isHost ? "Room creator" : "Watching"}
                 </span>
               </span>
               {participant.isHost && <Crown className="w-4 h-4 text-amber-300" title="Room creator" />}
-              {canManage && (
-                <button
-                  type="button"
-                  onClick={() => toggleControl(participant)}
-                  disabled={changingUserId === participant.userId}
-                  title={participant.canControl ? "Remove shared controls" : "Allow shared controls"}
-                  aria-label={participant.canControl ? `Remove controls from ${participant.name}` : `Allow controls for ${participant.name}`}
-                  className={`w-8 h-8 flex items-center justify-center border transition rounded-lg cursor-pointer disabled:opacity-50 ${participant.canControl ? "border-primary/50 bg-primary/15 text-primary" : "border-white/15 text-gray-400 hover:text-white hover:border-white/35"}`}
-                >
-                  {participant.canControl ? <ShieldCheck className="w-4 h-4" /> : <ShieldOff className="w-4 h-4" />}
-                </button>
-              )}
             </div>
           );
         }) : <p className="py-6 text-center text-sm text-gray-500">Connecting to the room...</p>}

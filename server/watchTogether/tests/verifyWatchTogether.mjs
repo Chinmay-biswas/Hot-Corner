@@ -19,6 +19,7 @@ import { initializeWatchTogetherSocket } from "../socket/watchTogetherSocket.js"
 import {
   extractYouTubeId,
   getPlaybackTime,
+  getPlaybackSyncPlan,
   MAX_GOOGLE_DRIVE_FILE_SIZE,
 } from "../../../client/src/features/watchTogether/lib/media.js";
 import { uploadGoogleDriveVideo } from "../../../client/src/features/watchTogether/lib/googleDrive.js";
@@ -127,6 +128,40 @@ try {
     updatedAt: new Date(Date.now() - 2000).toISOString(),
   });
   assert.ok(delayedPlayback >= 11.5 && delayedPlayback <= 3 + 10, "Late-join playback time did not advance.");
+  const hostReconnectPlayback = getPlaybackTime({
+    isPlaying: true,
+    currentTime: 120,
+    updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+  });
+  assert.ok(hostReconnectPlayback >= 419.5 && hostReconnectPlayback <= 421, "Host reconnect playback did not preserve the shared timeline.");
+
+  const behindPlan = getPlaybackSyncPlan({
+    playback: { isPlaying: true, currentTime: 100, updatedAt: new Date().toISOString() },
+    localTime: 90,
+    duration: 7200,
+  });
+  assert.equal(behindPlan.shouldSeek, false);
+  assert.equal(behindPlan.playbackRate, 1.5);
+  const aheadPlan = getPlaybackSyncPlan({
+    playback: { isPlaying: true, currentTime: 100, updatedAt: new Date().toISOString() },
+    localTime: 110,
+    duration: 7200,
+  });
+  assert.equal(aheadPlan.shouldSeek, false);
+  assert.equal(aheadPlan.playbackRate, 0.75);
+  const largeGapPlan = getPlaybackSyncPlan({
+    playback: { isPlaying: true, currentTime: 100, updatedAt: new Date().toISOString() },
+    localTime: 60,
+    duration: 7200,
+  });
+  assert.equal(largeGapPlan.shouldSeek, true);
+  const seekPlan = getPlaybackSyncPlan({
+    playback: { isPlaying: true, currentTime: 100, updatedAt: new Date().toISOString() },
+    localTime: 95,
+    duration: 7200,
+    forceSync: true,
+  });
+  assert.equal(seekPlan.shouldSeek, true);
 
   const originalFetch = globalThis.fetch;
   const driveRequests = [];
@@ -230,21 +265,20 @@ try {
   });
   assert.equal(guestPlaybackDenied.statusCode, 403);
 
-  const grantedController = await invokeController(updateRoomController, {
+  const sharedControllerDenied = await invokeController(updateRoomController, {
     userId: userIds.host,
     params: { roomCode },
     body: { userId: userIds.guest, allowed: true },
   });
-  assert.equal(grantedController.statusCode, 200);
-  assert.equal(grantedController.body.canControl, true);
+  assert.equal(sharedControllerDenied.statusCode, 403);
 
-  const guestPlaybackAllowed = await invokeController(updateRoomPlayback, {
-    userId: userIds.guest,
+  const hostPlaybackAllowed = await invokeController(updateRoomPlayback, {
+    userId: userIds.host,
     params: { roomCode },
     body: { isPlaying: true, currentTime: 47.25 },
   });
-  assert.equal(guestPlaybackAllowed.statusCode, 200);
-  assert.equal(guestPlaybackAllowed.body.room.playback.currentTime, 47.25);
+  assert.equal(hostPlaybackAllowed.statusCode, 200);
+  assert.equal(hostPlaybackAllowed.body.room.playback.currentTime, 47.25);
 
   const guestMediaDenied = await invokeController(updateRoomMedia, {
     userId: userIds.guest,
@@ -262,26 +296,18 @@ try {
   assert.equal(hostMediaChanged.body.room.media.source, "drive");
   assert.equal(hostMediaChanged.body.room.playback.currentTime, 0);
 
-  const controllerRevoked = await invokeController(updateRoomController, {
-    userId: userIds.host,
-    params: { roomCode },
-    body: { userId: userIds.guest, allowed: false },
-  });
-  assert.equal(controllerRevoked.statusCode, 200);
-  assert.equal(controllerRevoked.body.canControl, false);
-
-  const guestPlaybackRevoked = await invokeController(updateRoomPlayback, {
+  const guestPlaybackStillDenied = await invokeController(updateRoomPlayback, {
     userId: userIds.guest,
     params: { roomCode },
     body: { isPlaying: false, currentTime: 0 },
   });
-  assert.equal(guestPlaybackRevoked.statusCode, 403);
+  assert.equal(guestPlaybackStillDenied.statusCode, 403);
 
   const expiredRoom = await WatchRoom.create({
     code: `EX${Date.now().toString().slice(-8)}`,
     hostId: userIds.host,
     hostName: "Watch Host",
-    controllers: [userIds.host],
+    controllers: [],
     media: { source: "youtube", title: "Expired", youtubeId: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
     playback: { isPlaying: false, currentTime: 0, updatedAt: new Date() },
     expiresAt: new Date(Date.now() - 1000),
@@ -335,15 +361,34 @@ try {
   const socketGuestPlaybackDenied = await emitWithAck(guestSocket, "watch:playback", { isPlaying: true, currentTime: 12 });
   assert.equal(socketGuestPlaybackDenied.ok, false);
 
-  const guestPermissionEvent = waitForEvent(guestSocket, "watch:permission-changed");
   const socketGrant = await emitWithAck(hostSocket, "watch:controller", { userId: userIds.guest, allowed: true });
-  assert.equal(socketGrant.ok, true);
-  assert.equal((await guestPermissionEvent).canControl, true);
+  assert.equal(socketGrant.ok, false);
 
-  const hostPlaybackEvent = waitForEvent(hostSocket, "watch:playback");
-  const socketGuestPlayback = await emitWithAck(guestSocket, "watch:playback", { isPlaying: true, currentTime: 76.5 });
-  assert.equal(socketGuestPlayback.ok, true);
-  assert.equal((await hostPlaybackEvent).playback.currentTime, 76.5);
+  const guestPlaybackEvent = waitForEvent(guestSocket, "watch:playback");
+  const socketHostPlayback = await emitWithAck(hostSocket, "watch:playback", { isPlaying: true, currentTime: 76.5, forceSync: true });
+  assert.equal(socketHostPlayback.ok, true);
+  const synchronizedPlayback = await guestPlaybackEvent;
+  assert.equal(synchronizedPlayback.playback.currentTime, 76.5);
+  assert.equal(synchronizedPlayback.forceSync, true);
+  assert.ok(synchronizedPlayback.serverNow);
+
+  const socketGuestPlaybackStillDenied = await emitWithAck(guestSocket, "watch:playback", { isPlaying: false, currentTime: 0 });
+  assert.equal(socketGuestPlaybackStillDenied.ok, false);
+
+  const hostDisconnectParticipants = waitForEvent(guestSocket, "watch:participants");
+  await closeSocket(hostSocket);
+  const participantsAfterHostDisconnect = await hostDisconnectParticipants;
+  assert.equal(participantsAfterHostDisconnect.some((participant) => participant.userId === userIds.host), false);
+  const roomAfterHostDisconnect = await invokeController(getWatchRoom, {
+    userId: userIds.guest,
+    params: { roomCode },
+  });
+  assert.equal(roomAfterHostDisconnect.body.room.playback.isPlaying, true);
+
+  hostSocket = await connectSocket(socketUrl, "host-token");
+  const hostRejoin = await emitWithAck(hostSocket, "watch:join", { roomCode, displayName: "Socket Host" });
+  assert.equal(hostRejoin.ok, true);
+  assert.equal(hostRejoin.room.playback.isPlaying, true);
 
   const guestChatEvent = waitForEvent(hostSocket, "watch:chat");
   const socketChat = await emitWithAck(guestSocket, "watch:chat", { text: "  Hello   from  the room  " });

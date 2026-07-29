@@ -1,4 +1,7 @@
 export const MAX_GOOGLE_DRIVE_FILE_SIZE = 5 * 1024 * 1024 * 1024;
+export const MAX_SMOOTH_SYNC_DRIFT_SECONDS = 30;
+
+const DRIFT_CORRECTION_THRESHOLD_SECONDS = 0.35;
 
 export const extractYouTubeId = (value) => {
   const raw = String(value || "").trim();
@@ -47,8 +50,36 @@ export const getPlaybackTime = (playback) => {
   const baseTime = Number(playback.currentTime || 0);
   if (!playback.isPlaying || !playback.updatedAt) return baseTime;
 
-  const elapsedSeconds = Math.max(0, (Date.now() - new Date(playback.updatedAt).getTime()) / 1000);
+  const updatedAt = new Date(playback.updatedAt).getTime();
+  if (!Number.isFinite(updatedAt)) return baseTime;
+
+  const elapsedSeconds = Math.max(0, (Date.now() - updatedAt) / 1000);
   return baseTime + elapsedSeconds;
+};
+
+export const getPlaybackSyncPlan = ({ playback, localTime, duration, forceSync = false }) => {
+  const maximumTime = Number.isFinite(duration) && duration > 0 ? duration : Number.MAX_SAFE_INTEGER;
+  const targetTime = Math.min(Math.max(getPlaybackTime(playback), 0), maximumTime);
+  const currentTime = Math.max(0, Number(localTime) || 0);
+  const drift = targetTime - currentTime;
+  const absoluteDrift = Math.abs(drift);
+
+  if (!playback?.isPlaying) {
+    return { targetTime, drift, shouldSeek: absoluteDrift > 0.15, playbackRate: 1 };
+  }
+
+  if (forceSync || absoluteDrift > MAX_SMOOTH_SYNC_DRIFT_SECONDS) {
+    return { targetTime, drift, shouldSeek: forceSync || absoluteDrift > 0.15, playbackRate: 1 };
+  }
+
+  return {
+    targetTime,
+    drift,
+    shouldSeek: false,
+    playbackRate: drift > DRIFT_CORRECTION_THRESHOLD_SECONDS
+      ? 1.5
+      : drift < -DRIFT_CORRECTION_THRESHOLD_SECONDS ? 0.75 : 1,
+  };
 };
 
 export const formatPlaybackTime = (seconds) => {

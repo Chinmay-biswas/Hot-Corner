@@ -10,7 +10,7 @@ import {
   normalizePlayback,
   normalizeRoomCode,
 } from "../utils/roomUtils.js";
-import { canControlRoom, isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
+import { isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
 
 const getUserId = (req) => req.auth?.().userId;
 
@@ -52,7 +52,7 @@ export const createWatchRoom = async (req, res) => {
         hostId: userId,
         hostName: profile.name,
         hostImage: profile.image,
-        controllers: [userId],
+        controllers: [],
         media,
         playback: { isPlaying: false, currentTime: 0, updatedAt: new Date() },
         expiresAt: getRoomExpiryDate(),
@@ -100,8 +100,8 @@ export const updateRoomPlayback = async (req, res) => {
   try {
     const userId = getUserId(req);
     const room = await findActiveRoom(req.params.roomCode);
-    if (!canControlRoom(room, userId)) {
-      const error = new Error("Only the host or a controller can change playback.");
+    if (!isRoomHost(room, userId)) {
+      const error = new Error("Only the room creator can change playback.");
       error.statusCode = 403;
       throw error;
     }
@@ -143,23 +143,9 @@ export const updateRoomController = async (req, res) => {
       throw error;
     }
 
-    const targetUserId = String(req.body.userId || "").trim();
-    if (!targetUserId || targetUserId.length > 128 || targetUserId === room.hostId) {
-      throw createValidationError("Choose a valid room participant.");
-    }
-
-    const allowed = Boolean(req.body.allowed);
-    room.controllers = allowed
-      ? [...new Set([...(room.controllers || []), targetUserId])]
-      : (room.controllers || []).filter((id) => id !== targetUserId);
-    await room.save();
-
-    return res.json({
-      success: true,
-      userId: targetUserId,
-      canControl: allowed,
-      room: presentWatchRoom(room, userId),
-    });
+    const error = new Error("Shared controls are disabled. Only the room creator controls playback.");
+    error.statusCode = 403;
+    throw error;
   } catch (error) {
     return sendError(res, error);
   }
