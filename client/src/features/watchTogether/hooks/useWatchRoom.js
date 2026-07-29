@@ -8,6 +8,27 @@ const createProfile = (user) => ({
   image: user?.imageUrl || "",
 });
 
+const toClientPlayback = (playback, serverNow, forceSync = false) => {
+  if (!playback?.updatedAt) return playback;
+
+  const serverTime = new Date(serverNow).getTime();
+  const updatedAt = new Date(playback.updatedAt).getTime();
+  const clockOffset = Number.isFinite(serverTime) ? serverTime - Date.now() : 0;
+
+  return {
+    ...playback,
+    updatedAt: Number.isFinite(updatedAt)
+      ? new Date(updatedAt - clockOffset).toISOString()
+      : playback.updatedAt,
+    forceSync: Boolean(forceSync),
+  };
+};
+
+const toClientRoom = (room) => room ? {
+  ...room,
+  playback: toClientPlayback(room.playback, room.serverNow),
+} : room;
+
 export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
   const profile = useMemo(() => createProfile(user), [user]);
   const socketRef = useRef(null);
@@ -42,7 +63,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
           config,
         );
         if (!data.success) throw new Error(data.message || "Could not open this room.");
-        if (active) setRoom(data.room);
+        if (active) setRoom(toClientRoom(data.room));
       } catch (requestError) {
         if (active) setError(requestError.response?.data?.message || requestError.message || "Could not open this room.");
       } finally {
@@ -79,7 +100,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
               setError(response?.error || "Could not join the live room.");
               return;
             }
-            setRoom(response.room);
+            setRoom(toClientRoom(response.room));
             setParticipants(response.participants || []);
             setCallActive(Boolean(response.callActive));
           });
@@ -94,16 +115,16 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
         socketInstance.on("watch:chat", (message) => {
           setMessages((current) => [...current.slice(-99), message]);
         });
-        socketInstance.on("watch:playback", ({ playback }) => {
-          if (playback) setRoom((current) => current ? { ...current, playback } : current);
+        socketInstance.on("watch:playback", ({ playback, forceSync, serverNow }) => {
+          if (playback) {
+            setRoom((current) => current ? {
+              ...current,
+              playback: toClientPlayback(playback, serverNow, forceSync),
+            } : current);
+          }
         });
         socketInstance.on("watch:media", ({ room: updatedRoom }) => {
-          if (updatedRoom) setRoom(updatedRoom);
-        });
-        socketInstance.on("watch:permission-changed", ({ userId, canControl }) => {
-          if (userId === user.id) {
-            setRoom((current) => current ? { ...current, canControl } : current);
-          }
+          if (updatedRoom) setRoom(toClientRoom(updatedRoom));
         });
         socketInstance.on("watch:call-state", ({ active }) => setCallActive(Boolean(active)));
         socketInstance.connect();
@@ -145,21 +166,18 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
 
   const updatePlayback = useCallback(async (playback) => {
     const response = await emitWithAck("watch:playback", playback);
-    if (response.playback) setRoom((current) => current ? { ...current, playback: response.playback } : current);
+    if (response.playback) {
+      setRoom((current) => current ? {
+        ...current,
+        playback: toClientPlayback(response.playback, response.serverNow, playback.forceSync),
+      } : current);
+    }
     return response;
   }, [emitWithAck]);
 
   const updateMedia = useCallback(async (media) => {
     const response = await emitWithAck("watch:media", { media });
-    if (response.room) setRoom(response.room);
-    return response;
-  }, [emitWithAck]);
-
-  const updateController = useCallback(async (userId, allowed) => {
-    const response = await emitWithAck("watch:controller", { userId, allowed });
-    setParticipants((current) => current.map((participant) => participant.userId === userId
-      ? { ...participant, canControl: response.canControl }
-      : participant));
+    if (response.room) setRoom(toClientRoom(response.room));
     return response;
   }, [emitWithAck]);
 
@@ -177,7 +195,6 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
     profile,
     updatePlayback,
     updateMedia,
-    updateController,
     sendMessage,
     emitWithAck,
   };

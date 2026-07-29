@@ -151,15 +151,6 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
     toast.success("The room video was changed.");
   };
 
-  const toggleController = async (userId, allowed) => {
-    try {
-      await watchRoom.updateController(userId, allowed);
-      toast.success(allowed ? "Shared controls granted." : "Shared controls removed.");
-    } catch (permissionError) {
-      toast.error(permissionError.message || "Could not update controls.");
-    }
-  };
-
   if (watchRoom.isLoading) return <RoomLoading />;
 
   if (!watchRoom.room) {
@@ -230,8 +221,6 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
             <ParticipantsPanel
               participants={watchRoom.participants}
               currentUserId={user.id}
-              isHost={room.isHost}
-              onToggleControl={toggleController}
             />
             <RoomCallPanel callActive={watchRoom.callActive} call={call} />
             <WatchChat messages={watchRoom.messages} currentUserId={user.id} onSend={watchRoom.sendMessage} />

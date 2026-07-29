@@ -126,14 +126,17 @@ export const initializeWatchTogetherSocket = (io, { verifyTokenFn = verifyToken 
     socket.on("watch:playback", async (payload = {}, acknowledgement) => {
       try {
         const room = await ensureJoinedRoom(socket);
-        if (!canControlRoom(room, socket.data.userId)) {
-          return respond(acknowledgement, toSocketError("Only the host or a controller can change playback."));
+        if (!isRoomHost(room, socket.data.userId)) {
+          return respond(acknowledgement, toSocketError("Only the room creator can change playback."));
         }
 
         room.playback = normalizePlayback(payload);
         await room.save();
+        const presentedRoom = presentWatchRoom(room, socket.data.userId);
         const event = {
-          playback: presentWatchRoom(room, socket.data.userId).playback,
+          playback: presentedRoom.playback,
+          forceSync: Boolean(payload.forceSync),
+          serverNow: presentedRoom.serverNow,
           updatedBy: socket.data.profile,
         };
         io.to(roomKey(room.code)).emit("watch:playback", event);
@@ -168,24 +171,7 @@ export const initializeWatchTogetherSocket = (io, { verifyTokenFn = verifyToken 
           return respond(acknowledgement, toSocketError("Only the room creator can manage controllers."));
         }
 
-        const targetUserId = String(payload.userId || "").trim();
-        if (!targetUserId || targetUserId === room.hostId || targetUserId.length > 128) {
-          return respond(acknowledgement, toSocketError("Choose a valid room participant."));
-        }
-
-        const allowed = Boolean(payload.allowed);
-        room.controllers = allowed
-          ? [...new Set([...(room.controllers || []), targetUserId])]
-          : (room.controllers || []).filter((id) => id !== targetUserId);
-        await room.save();
-
-        io.to(roomKey(room.code)).emit("watch:permission-changed", {
-          userId: targetUserId,
-          canControl: allowed,
-          updatedBy: socket.data.profile,
-        });
-        broadcastParticipants(io, room);
-        return respond(acknowledgement, { ok: true, userId: targetUserId, canControl: allowed });
+        return respond(acknowledgement, toSocketError("Shared controls are disabled. Only the room creator controls playback."));
       } catch (error) {
         return respond(acknowledgement, toSocketError(error.message || "Could not update the controller."));
       }

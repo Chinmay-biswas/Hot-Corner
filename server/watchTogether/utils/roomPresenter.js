@@ -1,7 +1,6 @@
 export const isRoomHost = (room, userId) => room.hostId === userId;
 
-export const canControlRoom = (room, userId) => isRoomHost(room, userId)
-  || (room.controllers || []).includes(userId);
+export const canControlRoom = (room, userId) => isRoomHost(room, userId);
 
 export const presentWatchRoom = (room, userId) => ({
   id: room._id.toString(),
@@ -18,6 +17,7 @@ export const presentWatchRoom = (room, userId) => ({
     updatedAt: room.playback?.updatedAt?.toISOString?.() || new Date().toISOString(),
   },
   expiresAt: room.expiresAt.toISOString(),
+  serverNow: new Date().toISOString(),
   isHost: isRoomHost(room, userId),
   canControl: canControlRoom(room, userId),
 });
