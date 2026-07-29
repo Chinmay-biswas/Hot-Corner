@@ -12,10 +12,12 @@ const getIceServers = () => {
   }
 };
 
-export const useRoomCall = ({ socket, emitWithAck }) => {
+export const useRoomCall = ({ socket, emitWithAck, roomJoinVersion }) => {
   const peersRef = useRef(new Map());
   const localStreamRef = useRef(null);
   const queuedCandidatesRef = useRef(new Map());
+  const inCallRef = useRef(false);
+  const callJoinInFlightRef = useRef(false);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({});
   const [inCall, setInCall] = useState(false);
@@ -128,6 +130,14 @@ export const useRoomCall = ({ socket, emitWithAck }) => {
     }
   }, [createPeer, flushQueuedCandidates, socket]);
 
+  const joinSocketCall = useCallback(async () => {
+    const response = await emitWithAck("watch:call-join");
+    setInCall(true);
+    inCallRef.current = true;
+    await Promise.all(response.existingSockets.map((socketId) => createOffer(socketId)));
+    return response;
+  }, [createOffer, emitWithAck]);
+
   const joinCall = useCallback(async () => {
     setError("");
     try {
@@ -141,18 +151,35 @@ export const useRoomCall = ({ socket, emitWithAck }) => {
         setVideoEnabled(true);
       }
 
-      const response = await emitWithAck("watch:call-join");
-      setInCall(true);
-      await Promise.all(response.existingSockets.map((socketId) => createOffer(socketId)));
+      await joinSocketCall();
     } catch (callError) {
       await emitWithAck("watch:call-leave").catch(() => undefined);
       stopLocalStream();
+      inCallRef.current = false;
+      setInCall(false);
       setError(callError.message || "Could not join the video call.");
       throw callError;
     }
-  }, [createOffer, emitWithAck, stopLocalStream]);
+  }, [emitWithAck, joinSocketCall, stopLocalStream]);
+
+  const rejoinRoomCall = useCallback(async () => {
+    if (!inCallRef.current || !localStreamRef.current || callJoinInFlightRef.current) return;
+
+    callJoinInFlightRef.current = true;
+    try {
+      await joinSocketCall();
+      setError("");
+    } catch {
+      // The room hook retries the socket and will run this again after the next successful room join.
+      setError("Room call reconnecting. Your camera and microphone will stay on.");
+    } finally {
+      callJoinInFlightRef.current = false;
+    }
+  }, [joinSocketCall]);
 
   const leaveCall = useCallback(async () => {
+    inCallRef.current = false;
+    callJoinInFlightRef.current = false;
     try {
       await emitWithAck("watch:call-leave");
     } catch {
@@ -178,15 +205,28 @@ export const useRoomCall = ({ socket, emitWithAck }) => {
 
   useEffect(() => {
     if (!socket) return undefined;
+    const onSocketDisconnect = () => {
+      if (!inCallRef.current) return;
+      closeAllPeers();
+      setError("Room call reconnecting. Your camera and microphone will stay on.");
+    };
     socket.on("watch:webrtc-signal", handleSignal);
     socket.on("watch:call-participant-left", ({ socketId }) => closePeer(socketId));
+    socket.on("disconnect", onSocketDisconnect);
     return () => {
       socket.off("watch:webrtc-signal", handleSignal);
       socket.off("watch:call-participant-left");
+      socket.off("disconnect", onSocketDisconnect);
     };
-  }, [closePeer, handleSignal, socket]);
+  }, [closeAllPeers, closePeer, handleSignal, socket]);
+
+  useEffect(() => {
+    void rejoinRoomCall();
+  }, [rejoinRoomCall, roomJoinVersion]);
 
   useEffect(() => () => {
+    inCallRef.current = false;
+    callJoinInFlightRef.current = false;
     closeAllPeers();
     stopLocalStream();
   }, [closeAllPeers, stopLocalStream]);

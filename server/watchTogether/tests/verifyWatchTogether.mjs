@@ -18,9 +18,11 @@ import {
 import { initializeWatchTogetherSocket } from "../socket/watchTogetherSocket.js";
 import {
   extractYouTubeId,
+  getGoogleDriveStreamCandidates,
   getPlaybackTime,
   getPlaybackSyncPlan,
   MAX_GOOGLE_DRIVE_FILE_SIZE,
+  toDriveMedia,
 } from "../../../client/src/features/watchTogether/lib/media.js";
 import { uploadGoogleDriveVideo } from "../../../client/src/features/watchTogether/lib/googleDrive.js";
 
@@ -40,8 +42,9 @@ const sampleYouTubeMedia = {
 const sampleDriveMedia = {
   source: "drive",
   driveFileId: "1AbCdEfGhIjKlmNopQrsTuv",
+  resourceKey: "sample-resource-key",
   title: "Integration test Drive video",
-  url: "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlmNopQrsTuv",
+  url: "https://drive.usercontent.google.com/download?id=1AbCdEfGhIjKlmNopQrsTuv&export=download&resourcekey=sample-resource-key",
   mimeType: "video/mp4",
 };
 
@@ -72,6 +75,19 @@ const waitForEvent = (socket, event, timeoutMs = 4000) => new Promise((resolve, 
     clearTimeout(timeoutId);
     resolve(args.length === 1 ? args[0] : args);
   };
+  socket.once(event, onEvent);
+});
+
+const expectNoEvent = (socket, event, waitMs = 100) => new Promise((resolve, reject) => {
+  const onEvent = () => {
+    clearTimeout(timeoutId);
+    socket.off(event, onEvent);
+    reject(new Error(`Unexpected ${event} event.`));
+  };
+  const timeoutId = setTimeout(() => {
+    socket.off(event, onEvent);
+    resolve();
+  }, waitMs);
   socket.once(event, onEvent);
 });
 
@@ -122,6 +138,14 @@ try {
   assert.equal(extractYouTubeId("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(extractYouTubeId("https://www.youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(extractYouTubeId("not-a-youtube-link"), "");
+  const driveMediaWithResourceKey = toDriveMedia({
+    id: sampleDriveMedia.driveFileId,
+    name: "Resource-key video",
+    resourceKey: sampleDriveMedia.resourceKey,
+    webContentLink: sampleDriveMedia.url,
+  });
+  assert.equal(driveMediaWithResourceKey.url, sampleDriveMedia.url);
+  assert.ok(getGoogleDriveStreamCandidates(driveMediaWithResourceKey).includes(sampleDriveMedia.url));
   const delayedPlayback = getPlaybackTime({
     isPlaying: true,
     currentTime: 10,
@@ -294,6 +318,8 @@ try {
   });
   assert.equal(hostMediaChanged.statusCode, 200);
   assert.equal(hostMediaChanged.body.room.media.source, "drive");
+  assert.equal(hostMediaChanged.body.room.media.url, sampleDriveMedia.url);
+  assert.equal(hostMediaChanged.body.room.media.resourceKey, sampleDriveMedia.resourceKey);
   assert.equal(hostMediaChanged.body.room.playback.currentTime, 0);
 
   const guestPlaybackStillDenied = await invokeController(updateRoomPlayback, {
@@ -331,6 +357,7 @@ try {
       if (!userId) throw new Error("Invalid token");
       return { sub: userId };
     },
+    presenceGraceMs: 150,
   });
   await listen(httpServer);
   const address = httpServer.address();
@@ -376,7 +403,9 @@ try {
   assert.equal(socketGuestPlaybackStillDenied.ok, false);
 
   const hostDisconnectParticipants = waitForEvent(guestSocket, "watch:participants");
+  const hostStaysVisibleDuringGrace = expectNoEvent(guestSocket, "watch:participants", 60);
   await closeSocket(hostSocket);
+  await hostStaysVisibleDuringGrace;
   const participantsAfterHostDisconnect = await hostDisconnectParticipants;
   assert.equal(participantsAfterHostDisconnect.some((participant) => participant.userId === userIds.host), false);
   const roomAfterHostDisconnect = await invokeController(getWatchRoom, {
@@ -427,6 +456,23 @@ try {
   assert.equal(guestCall.ok, true);
   assert.deepEqual(guestCall.existingSockets, [hostSocket.id]);
   assert.equal((await hostParticipantJoined).socketId, guestSocket.id);
+
+  const guestSocketBeforeCallReconnect = guestSocket.id;
+  const hostCallLeftDuringGuestReconnect = waitForEvent(hostSocket, "watch:call-participant-left");
+  await closeSocket(guestSocket);
+  assert.equal((await hostCallLeftDuringGuestReconnect).socketId, guestSocketBeforeCallReconnect);
+
+  guestSocket = await connectSocket(socketUrl, "guest-token");
+  const guestRoomReadyAfterReconnect = waitForEvent(guestSocket, "watch:room-ready");
+  const guestReconnectJoin = await emitWithAck(guestSocket, "watch:join", { roomCode, displayName: "Socket Guest" });
+  assert.equal(guestReconnectJoin.ok, true);
+  assert.equal((await guestRoomReadyAfterReconnect).roomCode, roomCode);
+
+  const hostCallRejoined = waitForEvent(hostSocket, "watch:call-participant-joined");
+  const guestRejoinedCall = await emitWithAck(guestSocket, "watch:call-join");
+  assert.equal(guestRejoinedCall.ok, true);
+  assert.deepEqual(guestRejoinedCall.existingSockets, [hostSocket.id]);
+  assert.equal((await hostCallRejoined).socketId, guestSocket.id);
 
   const hostSignal = waitForEvent(hostSocket, "watch:webrtc-signal");
   const signalForwarded = await emitWithAck(guestSocket, "watch:webrtc-signal", {

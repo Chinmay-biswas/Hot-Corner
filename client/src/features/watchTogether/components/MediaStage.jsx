@@ -12,7 +12,7 @@ const REMOTE_EVENT_SUPPRESSION_MS = 1200;
 const DRIFT_CHECK_INTERVAL_MS = 1000;
 const FULLSCREEN_TOOL_HIDE_DELAY_MS = 2400;
 
-const MediaStage = ({ room, onPlayback, call, callActive }) => {
+const MediaStage = ({ room, onPlayback, call }) => {
   const playerRef = useRef(null);
   const driveVideoRef = useRef(null);
   const stageRef = useRef(null);
@@ -129,6 +129,16 @@ const MediaStage = ({ room, onPlayback, call, callActive }) => {
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
 
+  const revealFullscreenTools = useCallback(() => {
+    if (!isFullscreen) return;
+    window.clearTimeout(fullscreenTimerRef.current);
+    setFullscreenToolsVisible(true);
+    fullscreenTimerRef.current = window.setTimeout(
+      () => setFullscreenToolsVisible(false),
+      FULLSCREEN_TOOL_HIDE_DELAY_MS,
+    );
+  }, [isFullscreen]);
+
   useEffect(() => {
     window.clearTimeout(fullscreenTimerRef.current);
     if (!isFullscreen) {
@@ -149,15 +159,11 @@ const MediaStage = ({ room, onPlayback, call, callActive }) => {
     setFloatingCallVisible?.(Boolean(isFullscreen && showFullscreenCall && inCall));
   }, [inCall, isFullscreen, setFloatingCallVisible, showFullscreenCall]);
 
-  const revealFullscreenTools = () => {
-    if (!isFullscreen) return;
-    window.clearTimeout(fullscreenTimerRef.current);
-    setFullscreenToolsVisible(true);
-    fullscreenTimerRef.current = window.setTimeout(
-      () => setFullscreenToolsVisible(false),
-      FULLSCREEN_TOOL_HIDE_DELAY_MS,
-    );
-  };
+  useEffect(() => {
+    if (!isFullscreen) return undefined;
+    window.addEventListener("mousemove", revealFullscreenTools, { passive: true });
+    return () => window.removeEventListener("mousemove", revealFullscreenTools);
+  }, [isFullscreen, revealFullscreenTools]);
 
   const reportPlayback = useCallback(async ({ isPlaying, time = getCurrentTime(), forceSync = false }) => {
     if (!canControl || Date.now() < suppressUntilRef.current) return;
@@ -324,16 +330,33 @@ const MediaStage = ({ room, onPlayback, call, callActive }) => {
           />
         )}
 
-        {isFullscreen && (inCall || callActive) && (
+        {driveFallback && !isFullscreen && (
           <button
             type="button"
-            onClick={toggleFullscreenCall}
-            title={callButtonLabel}
-            aria-label={callButtonLabel}
-            className={`absolute top-3 right-3 z-40 w-8 h-8 flex items-center justify-center border border-white/30 bg-black/65 hover:border-primary transition rounded-lg cursor-pointer ${fullscreenToolsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+            onClick={toggleFullscreen}
+            title="Open Watch Together fullscreen"
+            aria-label="Open Watch Together fullscreen"
+            className="absolute right-3 bottom-3 z-40 w-9 h-9 flex items-center justify-center border border-white/30 bg-black/65 hover:border-primary transition rounded-lg cursor-pointer"
           >
-            <VideoIcon className="w-3.5 h-3.5" />
+            <Expand className="w-4 h-4" />
           </button>
+        )}
+        {isFullscreen && call && (
+          <div
+            className="absolute top-0 right-0 z-40 w-16 h-16"
+            onMouseMove={revealFullscreenTools}
+            onTouchStart={revealFullscreenTools}
+          >
+            <button
+              type="button"
+              onClick={toggleFullscreenCall}
+              title={callButtonLabel}
+              aria-label={callButtonLabel}
+              className={`absolute top-3 right-3 w-8 h-8 flex items-center justify-center border border-white/30 bg-black/65 hover:border-primary transition rounded-lg cursor-pointer ${fullscreenToolsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+            >
+              <VideoIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
         {isFullscreen && inCall && showFullscreenCall && (
           <FloatingCallOverlay call={call} containerRef={stageRef} />
