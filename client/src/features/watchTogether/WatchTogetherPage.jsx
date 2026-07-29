@@ -137,10 +137,10 @@ const WatchTogetherLobby = ({ user, axios, getToken }) => {
             <form onSubmit={joinRoom} className="mt-5 space-y-3">
               <input
                 value={joinCode}
-                onChange={(event) => { setJoinCode(cleanRoomCode(event.target.value)); setJoinError(""); }}
+                onChange={(event) => { setJoinCode(event.target.value.slice(0, 500)); setJoinError(""); }}
                 placeholder="ROOM CODE"
-                className="w-full h-11 border border-white/10 bg-black/30 px-3 rounded-lg outline-none uppercase tracking-[0.12em] text-sm focus:border-primary"
-                maxLength={12}
+                className="w-full h-11 border border-white/10 bg-black/30 px-3 rounded-lg outline-none font-mono text-sm focus:border-primary"
+                maxLength={500}
               />
               {joinError && <p className="text-xs text-red-300">{joinError}</p>}
               <button type="submit" className="w-full h-11 border border-white/20 hover:border-primary hover:bg-primary/10 transition rounded-lg text-sm font-medium cursor-pointer">Join room</button>
