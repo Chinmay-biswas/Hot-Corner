@@ -13,6 +13,8 @@ import { canControlRoom, isRoomHost, presentWatchRoom } from "../utils/roomPrese
 
 const activeParticipants = new Map();
 const callParticipants = new Map();
+const participantLeaveTimers = new Map();
+const DEFAULT_PRESENCE_GRACE_MS = 12_000;
 const roomKey = (code) => `watch-room:${code}`;
 
 const respond = (acknowledgement, payload) => {
@@ -34,19 +36,33 @@ const findActiveRoom = async (roomCode) => {
   return room;
 };
 
+const removeParticipant = (code, socketId) => {
+  const roomMembers = activeParticipants.get(code);
+  roomMembers?.delete(socketId);
+  if (roomMembers?.size === 0) activeParticipants.delete(code);
+};
+
+const removeCallParticipant = (code, socketId) => {
+  const activeCall = callParticipants.get(code);
+  activeCall?.delete(socketId);
+  if (activeCall?.size === 0) callParticipants.delete(code);
+};
+
+const clearParticipantLeaveTimer = (socketId) => {
+  const timer = participantLeaveTimers.get(socketId);
+  if (timer) clearTimeout(timer);
+  participantLeaveTimers.delete(socketId);
+};
+
 const removeSocketFromRoom = (socket) => {
   const code = socket.data.roomCode;
-  if (!code) return;
+  if (!code) return "";
 
-  const roomMembers = activeParticipants.get(code);
-  roomMembers?.delete(socket.id);
-  if (roomMembers?.size === 0) activeParticipants.delete(code);
-
-  const activeCall = callParticipants.get(code);
-  activeCall?.delete(socket.id);
-  if (activeCall?.size === 0) callParticipants.delete(code);
-
+  clearParticipantLeaveTimer(socket.id);
+  removeParticipant(code, socket.id);
+  removeCallParticipant(code, socket.id);
   socket.data.roomCode = null;
+  return code;
 };
 
 const listParticipants = (room) => {
@@ -70,6 +86,27 @@ const broadcastParticipants = (io, room) => {
   io.to(roomKey(room.code)).emit("watch:participants", listParticipants(room));
 };
 
+const scheduleParticipantLeave = (io, code, socketId, presenceGraceMs) => {
+  const removeAndBroadcast = async () => {
+    participantLeaveTimers.delete(socketId);
+    removeParticipant(code, socketId);
+    try {
+      const room = await WatchRoom.findOne({ code, expiresAt: { $gt: new Date() } });
+      if (room) broadcastParticipants(io, room);
+    } catch {
+      // The room may have expired while the reconnect grace period elapsed.
+    }
+  };
+
+  if (presenceGraceMs <= 0) {
+    void removeAndBroadcast();
+    return;
+  }
+
+  const timer = setTimeout(() => { void removeAndBroadcast(); }, presenceGraceMs);
+  participantLeaveTimers.set(socketId, timer);
+};
+
 const callState = (roomCode) => [...(callParticipants.get(roomCode) || new Set())];
 
 const ensureJoinedRoom = async (socket) => {
@@ -77,7 +114,11 @@ const ensureJoinedRoom = async (socket) => {
   return findActiveRoom(socket.data.roomCode);
 };
 
-export const initializeWatchTogetherSocket = (io, { verifyTokenFn = verifyToken } = {}) => {
+export const initializeWatchTogetherSocket = (
+  io,
+  { verifyTokenFn = verifyToken, presenceGraceMs = DEFAULT_PRESENCE_GRACE_MS } = {},
+) => {
+  const reconnectGraceMs = Math.max(0, Number(presenceGraceMs) || 0);
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error("Authentication is required."));
@@ -112,6 +153,7 @@ export const initializeWatchTogetherSocket = (io, { verifyTokenFn = verifyToken 
         activeParticipants.get(room.code).set(socket.id, participant);
 
         broadcastParticipants(io, room);
+        socket.emit("watch:room-ready", { roomCode: room.code });
         return respond(acknowledgement, {
           ok: true,
           room: presentWatchRoom(room, socket.data.userId),
@@ -257,22 +299,18 @@ export const initializeWatchTogetherSocket = (io, { verifyTokenFn = verifyToken 
       return respond(acknowledgement, { ok: true });
     });
 
-    socket.on("disconnect", async () => {
+    socket.on("disconnect", () => {
       const code = socket.data.roomCode;
       if (!code) return;
 
-      removeSocketFromRoom(socket);
+      removeCallParticipant(code, socket.id);
+      socket.data.roomCode = null;
       socket.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
-      try {
-        const room = await WatchRoom.findOne({ code, expiresAt: { $gt: new Date() } });
-        if (room) broadcastParticipants(io, room);
-      } catch {
-        // The room may have expired while the socket was disconnecting.
-      }
       io.to(roomKey(code)).emit("watch:call-state", {
         active: Boolean(callParticipants.get(code)?.size),
         socketIds: callState(code),
       });
+      scheduleParticipantLeave(io, code, socket.id, reconnectGraceMs);
     });
   });
 };

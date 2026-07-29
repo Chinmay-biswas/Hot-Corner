@@ -165,7 +165,11 @@ const RoomLoading = () => (
 const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
   const navigate = useNavigate();
   const watchRoom = useWatchRoom({ roomCode, user, axios, getToken });
-  const call = useRoomCall({ socket: watchRoom.socket, emitWithAck: watchRoom.emitWithAck });
+  const call = useRoomCall({
+    socket: watchRoom.socket,
+    emitWithAck: watchRoom.emitWithAck,
+    roomJoinVersion: watchRoom.roomJoinVersion,
+  });
   const [changingVideo, setChangingVideo] = useState(false);
 
   const copyRoomCode = async () => {
@@ -275,7 +279,7 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
 
         <div className="grid xl:grid-cols-[minmax(0,1fr)_22rem] gap-6 mt-6">
           <div className="min-w-0 space-y-4">
-            <MediaStage room={room} onPlayback={watchRoom.updatePlayback} call={call} callActive={watchRoom.callActive} />
+            <MediaStage room={room} onPlayback={watchRoom.updatePlayback} call={call} />
             {room.isHost && (
               <div className="flex justify-end">
                 <button

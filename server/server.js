@@ -30,7 +30,10 @@ const corsOptions = {
   credentials: true,
 };
 const httpServer = createServer(app);
-const io = new SocketIOServer(httpServer, { cors: corsOptions });
+const io = new SocketIOServer(httpServer, {
+  cors: corsOptions,
+  pingTimeout: 60_000,
+});
 
 
 await connectDB()

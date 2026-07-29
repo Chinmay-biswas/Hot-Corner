@@ -3,9 +3,9 @@ import { io } from "socket.io-client";
 
 const getSocketUrl = () => import.meta.env.VITE_BASE_URL || window.location.origin;
 const MAX_ROOM_MESSAGES = 100;
-const SOCKET_AUTH_RETRY_LIMIT = 2;
+const MAX_SOCKET_AUTH_RETRY_DELAY_MS = 15_000;
 
-const isAuthenticationError = (socketError) => /authentication is required/i.test(socketError?.message || "");
+const isAuthenticationError = (socketError) => /authentication|unauthori[sz]ed|token/i.test(socketError?.message || "");
 const browserIsOnline = () => typeof navigator === "undefined" || navigator.onLine;
 
 const createProfile = (user) => ({
@@ -56,6 +56,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
   const [error, setError] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [callActive, setCallActive] = useState(false);
+  const [roomJoinVersion, setRoomJoinVersion] = useState(0);
 
   const getAuthorization = useCallback(async () => ({
     headers: { Authorization: `Bearer ${await getToken()}` },
@@ -151,6 +152,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
         setParticipants(response.participants || []);
         setMessages((current) => mergeMessages(current, joinedRoom.messages));
         setCallActive(Boolean(response.callActive));
+        setRoomJoinVersion((version) => version + 1);
       });
     };
 
@@ -161,18 +163,19 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
         return;
       }
 
-      if (isAuthenticationError(socketError) && authenticationRetries < SOCKET_AUTH_RETRY_LIMIT) {
+      if (isAuthenticationError(socketError)) {
         authenticationRetries += 1;
         setConnectionStatus("connecting");
-        setError("");
-        scheduleReconnect(authenticationRetries * 750);
+        setError(authenticationRetries > 1 ? "Refreshing your sign-in and reconnecting to the room." : "");
+        scheduleReconnect(Math.min(
+          750 * (2 ** Math.max(authenticationRetries - 1, 0)),
+          MAX_SOCKET_AUTH_RETRY_DELAY_MS,
+        ));
         return;
       }
 
       setConnectionStatus("error");
-      setError(isAuthenticationError(socketError)
-        ? "Your sign-in could not be refreshed. Please sign out and sign in again."
-        : socketError.message || "The live room could not connect.");
+      setError(socketError.message || "The live room could not connect.");
     };
 
     const onDisconnect = (reason) => {
@@ -183,7 +186,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
       }
 
       setConnectionStatus("connecting");
-      if (reason === "io server disconnect") scheduleReconnect(500);
+      if (reason !== "io client disconnect") scheduleReconnect(750);
     };
 
     const onReconnectAttempt = () => {
@@ -285,6 +288,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
     error,
     connectionStatus,
     callActive,
+    roomJoinVersion,
     socket,
     profile,
     updatePlayback,

@@ -78,6 +78,19 @@ const waitForEvent = (socket, event, timeoutMs = 4000) => new Promise((resolve, 
   socket.once(event, onEvent);
 });
 
+const expectNoEvent = (socket, event, waitMs = 100) => new Promise((resolve, reject) => {
+  const onEvent = () => {
+    clearTimeout(timeoutId);
+    socket.off(event, onEvent);
+    reject(new Error(`Unexpected ${event} event.`));
+  };
+  const timeoutId = setTimeout(() => {
+    socket.off(event, onEvent);
+    resolve();
+  }, waitMs);
+  socket.once(event, onEvent);
+});
+
 const emitWithAck = (socket, event, payload = {}) => new Promise((resolve, reject) => {
   socket.timeout(4000).emit(event, payload, (timeoutError, response) => {
     if (timeoutError) reject(timeoutError);
@@ -344,6 +357,7 @@ try {
       if (!userId) throw new Error("Invalid token");
       return { sub: userId };
     },
+    presenceGraceMs: 150,
   });
   await listen(httpServer);
   const address = httpServer.address();
@@ -389,7 +403,9 @@ try {
   assert.equal(socketGuestPlaybackStillDenied.ok, false);
 
   const hostDisconnectParticipants = waitForEvent(guestSocket, "watch:participants");
+  const hostStaysVisibleDuringGrace = expectNoEvent(guestSocket, "watch:participants", 60);
   await closeSocket(hostSocket);
+  await hostStaysVisibleDuringGrace;
   const participantsAfterHostDisconnect = await hostDisconnectParticipants;
   assert.equal(participantsAfterHostDisconnect.some((participant) => participant.userId === userIds.host), false);
   const roomAfterHostDisconnect = await invokeController(getWatchRoom, {
@@ -440,6 +456,23 @@ try {
   assert.equal(guestCall.ok, true);
   assert.deepEqual(guestCall.existingSockets, [hostSocket.id]);
   assert.equal((await hostParticipantJoined).socketId, guestSocket.id);
+
+  const guestSocketBeforeCallReconnect = guestSocket.id;
+  const hostCallLeftDuringGuestReconnect = waitForEvent(hostSocket, "watch:call-participant-left");
+  await closeSocket(guestSocket);
+  assert.equal((await hostCallLeftDuringGuestReconnect).socketId, guestSocketBeforeCallReconnect);
+
+  guestSocket = await connectSocket(socketUrl, "guest-token");
+  const guestRoomReadyAfterReconnect = waitForEvent(guestSocket, "watch:room-ready");
+  const guestReconnectJoin = await emitWithAck(guestSocket, "watch:join", { roomCode, displayName: "Socket Guest" });
+  assert.equal(guestReconnectJoin.ok, true);
+  assert.equal((await guestRoomReadyAfterReconnect).roomCode, roomCode);
+
+  const hostCallRejoined = waitForEvent(hostSocket, "watch:call-participant-joined");
+  const guestRejoinedCall = await emitWithAck(guestSocket, "watch:call-join");
+  assert.equal(guestRejoinedCall.ok, true);
+  assert.deepEqual(guestRejoinedCall.existingSockets, [hostSocket.id]);
+  assert.equal((await hostCallRejoined).socketId, guestSocket.id);
 
   const hostSignal = waitForEvent(hostSocket, "watch:webrtc-signal");
   const signalForwarded = await emitWithAck(guestSocket, "watch:webrtc-signal", {
