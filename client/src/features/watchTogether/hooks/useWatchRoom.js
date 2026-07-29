@@ -3,6 +3,10 @@ import { io } from "socket.io-client";
 
 const getSocketUrl = () => import.meta.env.VITE_BASE_URL || window.location.origin;
 const MAX_ROOM_MESSAGES = 100;
+const SOCKET_AUTH_RETRY_LIMIT = 2;
+
+const isAuthenticationError = (socketError) => /authentication is required/i.test(socketError?.message || "");
+const browserIsOnline = () => typeof navigator === "undefined" || navigator.onLine;
 
 const createProfile = (user) => ({
   displayName: user?.fullName || user?.firstName || "Movie fan",
@@ -95,68 +99,140 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
     if (!roomCode || !user) return undefined;
     let disposed = false;
     let socketInstance;
+    let authenticationRetries = 0;
+    let reconnectTimer;
 
-    const connectSocket = async () => {
-      try {
-        const token = await getToken();
-        if (disposed || !token) return;
-
-        socketInstance = io(getSocketUrl(), {
-          autoConnect: false,
-          auth: { token },
-          transports: ["websocket", "polling"],
-        });
-        socketRef.current = socketInstance;
-        setSocket(socketInstance);
-
-        socketInstance.on("connect", () => {
-          setConnectionStatus("connected");
-          socketInstance.emit("watch:join", { roomCode, ...profile }, (response) => {
-            if (!response?.ok) {
-              setError(response?.error || "Could not join the live room.");
-              return;
-            }
-            const joinedRoom = toClientRoom(response.room);
-            setRoom(joinedRoom);
-            setParticipants(response.participants || []);
-            setMessages((current) => mergeMessages(current, joinedRoom.messages));
-            setCallActive(Boolean(response.callActive));
-          });
-        });
-
-        socketInstance.on("connect_error", (socketError) => {
-          setConnectionStatus("error");
-          setError(socketError.message || "The live room could not connect.");
-        });
-        socketInstance.on("disconnect", () => setConnectionStatus("connecting"));
-        socketInstance.on("watch:participants", setParticipants);
-        socketInstance.on("watch:chat", (message) => {
-          setMessages((current) => mergeMessages(current, [message]));
-        });
-        socketInstance.on("watch:playback", ({ playback, forceSync, serverNow }) => {
-          if (playback) {
-            setRoom((current) => current ? {
-              ...current,
-              playback: toClientPlayback(playback, serverNow, forceSync),
-            } : current);
-          }
-        });
-        socketInstance.on("watch:media", ({ room: updatedRoom }) => {
-          if (updatedRoom) setRoom(toClientRoom(updatedRoom));
-        });
-        socketInstance.on("watch:call-state", ({ active }) => setCallActive(Boolean(active)));
-        socketInstance.connect();
-      } catch (socketError) {
-        if (!disposed) {
-          setConnectionStatus("error");
-          setError(socketError.message || "The live room could not connect.");
-        }
-      }
+    const setOfflineState = () => {
+      setConnectionStatus("offline");
+      setError("Your internet connection is offline. The room will reconnect when it returns.");
     };
 
-    connectSocket();
+    const scheduleReconnect = (delay = 0) => {
+      if (disposed || !browserIsOnline()) return;
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = window.setTimeout(() => {
+        if (!disposed && !socketInstance?.connected) socketInstance?.connect();
+      }, delay);
+    };
+
+    const resolveSocketAuth = (callback) => {
+      getToken({ skipCache: true })
+        .then((token) => callback(token ? { token } : {}))
+        .catch(() => callback({}));
+    };
+
+    socketInstance = io(getSocketUrl(), {
+      autoConnect: false,
+      auth: resolveSocketAuth,
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 8000,
+      randomizationFactor: 0.3,
+      timeout: 20000,
+    });
+    socketRef.current = socketInstance;
+    setSocket(socketInstance);
+
+    const onConnect = () => {
+      authenticationRetries = 0;
+      window.clearTimeout(reconnectTimer);
+      setConnectionStatus("connected");
+      setError("");
+      socketInstance.emit("watch:join", { roomCode, ...profile }, (response) => {
+        if (!response?.ok) {
+          setConnectionStatus("error");
+          setError(response?.error || "Could not join the live room.");
+          return;
+        }
+        const joinedRoom = toClientRoom(response.room);
+        setRoom(joinedRoom);
+        setParticipants(response.participants || []);
+        setMessages((current) => mergeMessages(current, joinedRoom.messages));
+        setCallActive(Boolean(response.callActive));
+      });
+    };
+
+    const onConnectError = (socketError) => {
+      if (disposed) return;
+      if (!browserIsOnline()) {
+        setOfflineState();
+        return;
+      }
+
+      if (isAuthenticationError(socketError) && authenticationRetries < SOCKET_AUTH_RETRY_LIMIT) {
+        authenticationRetries += 1;
+        setConnectionStatus("connecting");
+        setError("");
+        scheduleReconnect(authenticationRetries * 750);
+        return;
+      }
+
+      setConnectionStatus("error");
+      setError(isAuthenticationError(socketError)
+        ? "Your sign-in could not be refreshed. Please sign out and sign in again."
+        : socketError.message || "The live room could not connect.");
+    };
+
+    const onDisconnect = (reason) => {
+      if (disposed) return;
+      if (!browserIsOnline()) {
+        setOfflineState();
+        return;
+      }
+
+      setConnectionStatus("connecting");
+      if (reason === "io server disconnect") scheduleReconnect(500);
+    };
+
+    const onReconnectAttempt = () => {
+      if (!disposed && browserIsOnline()) setConnectionStatus("connecting");
+    };
+    const onOnline = () => {
+      authenticationRetries = 0;
+      setConnectionStatus("connecting");
+      setError("");
+      scheduleReconnect();
+    };
+    const onOffline = () => {
+      window.clearTimeout(reconnectTimer);
+      setOfflineState();
+      socketInstance.disconnect();
+    };
+
+    socketInstance.on("connect", onConnect);
+    socketInstance.on("connect_error", onConnectError);
+    socketInstance.on("disconnect", onDisconnect);
+    socketInstance.io.on("reconnect_attempt", onReconnectAttempt);
+    socketInstance.on("watch:participants", setParticipants);
+    socketInstance.on("watch:chat", (message) => {
+      setMessages((current) => mergeMessages(current, [message]));
+    });
+    socketInstance.on("watch:playback", ({ playback, forceSync, serverNow }) => {
+      if (playback) {
+        setRoom((current) => current ? {
+          ...current,
+          playback: toClientPlayback(playback, serverNow, forceSync),
+        } : current);
+      }
+    });
+    socketInstance.on("watch:media", ({ room: updatedRoom }) => {
+      if (updatedRoom) setRoom(toClientRoom(updatedRoom));
+    });
+    socketInstance.on("watch:call-state", ({ active }) => setCallActive(Boolean(active)));
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    if (browserIsOnline()) socketInstance.connect();
+    else setOfflineState();
+
     return () => {
       disposed = true;
+      window.clearTimeout(reconnectTimer);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+      socketInstance?.io.off("reconnect_attempt", onReconnectAttempt);
       socketInstance?.disconnect();
       if (socketRef.current === socketInstance) socketRef.current = null;
     };

@@ -225,7 +225,11 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
   const { room } = watchRoom;
   const connectionLabel = watchRoom.connectionStatus === "connected"
     ? "Live"
-    : watchRoom.connectionStatus === "error" ? "Offline" : "Reconnecting";
+    : watchRoom.connectionStatus === "offline" ? "Offline"
+      : watchRoom.connectionStatus === "error" ? "Connection problem" : "Reconnecting";
+  const connectionColor = connectionLabel === "Live"
+    ? "text-primary"
+    : connectionLabel === "Reconnecting" ? "text-amber-200" : "text-red-300";
 
   return (
     <main className={pageShell}>
@@ -241,7 +245,7 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-xs text-gray-400"><Radio className={`w-3.5 h-3.5 ${connectionLabel === "Live" ? "text-primary" : "text-amber-200"}`} /> {connectionLabel}</div>
+            <div className="flex items-center gap-2 text-xs text-gray-400"><Radio className={`w-3.5 h-3.5 ${connectionColor}`} /> {connectionLabel}</div>
             <h1 className="mt-1 truncate text-xl font-semibold">{room.host.name}'s room</h1>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-sm text-gray-400">
