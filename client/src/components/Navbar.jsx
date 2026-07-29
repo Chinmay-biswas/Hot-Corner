@@ -19,7 +19,7 @@ const Navbar = () => {
     const{user}=useUser()
     const navigate =useNavigate()
     const location = useLocation()
-    const shouldAutoHide = location.pathname === '/' || location.pathname.startsWith('/watch-together')
+    const shouldAutoHide = location.pathname === '/'
 
     const clearHideTimer = useCallback(() => {
       window.clearTimeout(hideTimerRef.current)
