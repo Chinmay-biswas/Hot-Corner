@@ -1,6 +1,15 @@
 const ROOM_CODE_CHARACTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_PLAYBACK_SECONDS = 24 * 60 * 60;
-const getDriveStreamUrl = (driveFileId) => `https://drive.usercontent.google.com/download?id=${encodeURIComponent(driveFileId)}&export=download&confirm=t`;
+const getDriveStreamUrl = (driveFileId, resourceKey = "") => {
+  const params = new URLSearchParams({ id: driveFileId, export: "download", confirm: "t" });
+  if (resourceKey) params.set("resourcekey", resourceKey);
+  return `https://drive.usercontent.google.com/download?${params}`;
+};
+
+const cleanDriveResourceKey = (value) => {
+  const resourceKey = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{8,200}$/.test(resourceKey) ? resourceKey : "";
+};
 
 export const createValidationError = (message) => {
   const error = new Error(message);
@@ -70,7 +79,9 @@ export const parseDriveFileId = (value) => {
 const isGoogleDriveUrl = (value) => {
   try {
     const host = new URL(value).hostname.toLowerCase();
-    return host === "drive.google.com" || host.endsWith(".googleusercontent.com");
+    return host === "drive.google.com"
+      || host.endsWith(".googleusercontent.com")
+      || host.endsWith(".usercontent.google.com");
   } catch {
     return false;
   }
@@ -113,13 +124,18 @@ export const normalizeMedia = (value = {}) => {
     const driveFileId = parseDriveFileId(value.driveFileId || value.url);
     if (!driveFileId) throw createValidationError("Select a Google Drive video first.");
 
+    const suppliedUrl = String(value.url || "").trim();
     const suppliedThumbnail = String(value.thumbnail || "").trim();
+    const resourceKey = cleanDriveResourceKey(value.resourceKey);
 
     return {
       source,
       driveFileId,
+      resourceKey,
       title: cleanMediaTitle(value.title, "Google Drive video"),
-      url: getDriveStreamUrl(driveFileId),
+      url: isGoogleDriveUrl(suppliedUrl)
+        ? suppliedUrl.slice(0, 1500)
+        : getDriveStreamUrl(driveFileId, resourceKey),
       previewUrl: `https://drive.google.com/file/d/${driveFileId}/preview`,
       thumbnail: isGoogleDriveUrl(suppliedThumbnail) ? suppliedThumbnail.slice(0, 1500) : "",
       mimeType: String(value.mimeType || "").startsWith("video/") ? value.mimeType.slice(0, 120) : "",

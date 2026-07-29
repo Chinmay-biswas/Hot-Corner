@@ -18,6 +18,7 @@ const mediaSchema = new mongoose.Schema(
     thumbnail: { type: String },
     youtubeId: { type: String },
     driveFileId: { type: String },
+    resourceKey: { type: String },
     mimeType: { type: String },
   },
   { _id: false },

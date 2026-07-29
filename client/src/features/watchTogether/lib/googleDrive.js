@@ -85,7 +85,7 @@ export const listGoogleDriveVideos = async (accessToken) => {
     q: "mimeType contains 'video/' and trashed = false",
     pageSize: "30",
     orderBy: "modifiedTime desc",
-    fields: "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,size,modifiedTime)",
+    fields: "files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink,resourceKey,size,modifiedTime)",
   });
   const response = await driveRequest(`https://www.googleapis.com/drive/v3/files?${params}`, accessToken);
   const data = await response.json();
@@ -101,7 +101,7 @@ export const shareGoogleDriveFileWithRoom = async (accessToken, fileId) => {
 };
 
 export const getGoogleDriveVideo = async (accessToken, fileId) => {
-  const fields = "id,name,mimeType,thumbnailLink,webViewLink,webContentLink,size,modifiedTime";
+  const fields = "id,name,mimeType,thumbnailLink,webViewLink,webContentLink,resourceKey,size,modifiedTime";
   const response = await driveRequest(
     `https://www.googleapis.com/drive/v3/files/${fileId}?fields=${encodeURIComponent(fields)}`,
     accessToken,

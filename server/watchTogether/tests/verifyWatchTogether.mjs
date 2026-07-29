@@ -18,9 +18,11 @@ import {
 import { initializeWatchTogetherSocket } from "../socket/watchTogetherSocket.js";
 import {
   extractYouTubeId,
+  getGoogleDriveStreamCandidates,
   getPlaybackTime,
   getPlaybackSyncPlan,
   MAX_GOOGLE_DRIVE_FILE_SIZE,
+  toDriveMedia,
 } from "../../../client/src/features/watchTogether/lib/media.js";
 import { uploadGoogleDriveVideo } from "../../../client/src/features/watchTogether/lib/googleDrive.js";
 
@@ -40,8 +42,9 @@ const sampleYouTubeMedia = {
 const sampleDriveMedia = {
   source: "drive",
   driveFileId: "1AbCdEfGhIjKlmNopQrsTuv",
+  resourceKey: "sample-resource-key",
   title: "Integration test Drive video",
-  url: "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlmNopQrsTuv",
+  url: "https://drive.usercontent.google.com/download?id=1AbCdEfGhIjKlmNopQrsTuv&export=download&resourcekey=sample-resource-key",
   mimeType: "video/mp4",
 };
 
@@ -122,6 +125,14 @@ try {
   assert.equal(extractYouTubeId("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(extractYouTubeId("https://www.youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(extractYouTubeId("not-a-youtube-link"), "");
+  const driveMediaWithResourceKey = toDriveMedia({
+    id: sampleDriveMedia.driveFileId,
+    name: "Resource-key video",
+    resourceKey: sampleDriveMedia.resourceKey,
+    webContentLink: sampleDriveMedia.url,
+  });
+  assert.equal(driveMediaWithResourceKey.url, sampleDriveMedia.url);
+  assert.ok(getGoogleDriveStreamCandidates(driveMediaWithResourceKey).includes(sampleDriveMedia.url));
   const delayedPlayback = getPlaybackTime({
     isPlaying: true,
     currentTime: 10,
@@ -294,6 +305,8 @@ try {
   });
   assert.equal(hostMediaChanged.statusCode, 200);
   assert.equal(hostMediaChanged.body.room.media.source, "drive");
+  assert.equal(hostMediaChanged.body.room.media.url, sampleDriveMedia.url);
+  assert.equal(hostMediaChanged.body.room.media.resourceKey, sampleDriveMedia.resourceKey);
   assert.equal(hostMediaChanged.body.room.playback.currentTime, 0);
 
   const guestPlaybackStillDenied = await invokeController(updateRoomPlayback, {

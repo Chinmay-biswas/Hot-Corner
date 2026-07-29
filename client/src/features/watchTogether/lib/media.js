@@ -36,24 +36,37 @@ export const formatBytes = (bytes) => {
   return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 };
 
-export const getGoogleDriveStreamUrl = (driveFileId) => (
-  `https://drive.usercontent.google.com/download?id=${encodeURIComponent(driveFileId)}&export=download&confirm=t`
-);
+export const getGoogleDriveStreamUrl = (driveFileId, resourceKey = "") => {
+  const params = new URLSearchParams({ id: driveFileId, export: "download", confirm: "t" });
+  if (resourceKey) params.set("resourcekey", resourceKey);
+  return `https://drive.usercontent.google.com/download?${params}`;
+};
 
-export const getGoogleDriveStreamCandidates = ({ driveFileId, url }) => {
+const getDriveResourceKeyFromUrl = (url) => {
+  try {
+    return new URL(url).searchParams.get("resourcekey") || "";
+  } catch {
+    return "";
+  }
+};
+
+export const getGoogleDriveStreamCandidates = ({ driveFileId, resourceKey, url }) => {
   const fileId = String(driveFileId || "").trim();
+  const resolvedResourceKey = String(resourceKey || getDriveResourceKeyFromUrl(url)).trim();
+  const resourceKeyParameter = resolvedResourceKey ? `&resourcekey=${encodeURIComponent(resolvedResourceKey)}` : "";
   return [...new Set([
     url,
-    fileId && getGoogleDriveStreamUrl(fileId),
-    fileId && `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`,
+    fileId && getGoogleDriveStreamUrl(fileId, resolvedResourceKey),
+    fileId && `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}${resourceKeyParameter}`,
   ].filter(Boolean))];
 };
 
 export const toDriveMedia = (file) => ({
   source: "drive",
   driveFileId: file.id,
+  resourceKey: file.resourceKey || "",
   title: file.name,
-  url: getGoogleDriveStreamUrl(file.id),
+  url: file.webContentLink || getGoogleDriveStreamUrl(file.id, file.resourceKey),
   thumbnail: file.thumbnailLink || "",
   mimeType: file.mimeType || "",
 });
