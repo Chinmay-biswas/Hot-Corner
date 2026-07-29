@@ -1,13 +1,13 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import axios from 'axios';
 import { useAuth, useUser } from "@clerk/clerk-react";
 import {  useLocation, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { AppContext } from "./AppContextCore";
 
 axios.defaults.baseURL=import.meta.env.VITE_BASE_URL;
 
-export const AppContext = createContext();
 export const AppProvider = ({ children })=>{
 
 const navigate = useNavigate();
@@ -26,7 +26,7 @@ const {getToken} = useAuth()
 const location = useLocation()
 
 
-const fetchIsAdmin = async ()=>{
+const fetchIsAdmin = useCallback(async ()=>{
     try {
 
         const {data} = await axios.get('/api/admin/is-admin',{headers:
@@ -43,10 +43,10 @@ const fetchIsAdmin = async ()=>{
         setIsAdmin(false)
         
     }
-}
+}, [getToken, location.pathname, navigate])
 
 
-const fetchShows =async()=>{
+const fetchShows = useCallback(async()=>{
     try {
 
         const {data}= await axios.get('/api/show/all')
@@ -61,9 +61,9 @@ const fetchShows =async()=>{
         console.error(error)
         
     }
-}
+}, [])
 
-const syncCurrentUser = async()=>{
+const syncCurrentUser = useCallback(async()=>{
     try {
         await axios.post('/api/user/sync',{},{
             headers:
@@ -72,9 +72,9 @@ const syncCurrentUser = async()=>{
     } catch (error) {
         console.error(error)
     }
-}
+}, [getToken])
 
-const trackUserTime = async(seconds)=>{
+const trackUserTime = useCallback(async(seconds)=>{
     try {
         await axios.post('/api/user/track-time',{seconds},{
             headers:
@@ -83,12 +83,12 @@ const trackUserTime = async(seconds)=>{
     } catch (error) {
         console.error(error)
     }
-}
+}, [getToken])
 
 
 
 //fetch fav movies for user 
-const fetchFavoriteMovies =async()=>{
+const fetchFavoriteMovies = useCallback(async()=>{
     try {
 
         const {data}= await axios.get('/api/user/favorites',{
@@ -108,13 +108,13 @@ const fetchFavoriteMovies =async()=>{
         console.error(error)
         
     }
-}
+}, [getToken])
 
 
 
 useEffect(()=>{
     fetchShows()
-},[])
+},[fetchShows])
 
 useEffect(()=>{
     if(user){
@@ -125,7 +125,7 @@ useEffect(()=>{
         setIsAdmin(false)
         setFavoriteMovies([])
     }
-},[user])
+},[fetchFavoriteMovies, fetchIsAdmin, syncCurrentUser, user])
 
 useEffect(()=>{
     if(!user) return;
@@ -137,13 +137,12 @@ useEffect(()=>{
     },30000)
 
     return ()=> clearInterval(interval)
-},[user])
+},[trackUserTime, user])
 
-
-
-    const value = {
+    const value = useMemo(() => ({
         axios,fetchIsAdmin,user,getToken,navigate,isAdmin,shows,favoriteMovies,fetchFavoriteMovies,image_base_url
-    }
+    }), [favoriteMovies, fetchFavoriteMovies, fetchIsAdmin, getToken, image_base_url, isAdmin, navigate, shows, user])
+
     return(
         <AppContext.Provider value={value}>
                 { children }
@@ -151,5 +150,3 @@ useEffect(()=>{
         </AppContext.Provider>
     )
 }
-
-export const useAppContext = () => useContext(AppContext)

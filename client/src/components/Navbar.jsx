@@ -1,10 +1,10 @@
-//A fixed responsive navbar with a mobile slide-in menu, dynamic links based on auth/admin state, and Clerk login/user button.
+
 import { Link, useNavigate } from 'react-router-dom'
 import { assets } from '../assets/assets'
 import { MenuIcon, SearchIcon, ShieldIcon, TicketPlus, XIcon } from "lucide-react";
 import { useState } from 'react';
-import { /*useClerk,*/ UserButton, useUser,SignInButton } from '@clerk/clerk-react';
-import { useAppContext } from '../context/AppContext';
+import { UserButton, useUser,SignInButton } from '@clerk/clerk-react';
+import { useAppContext } from '../context/AppContextCore';
 
 const Navbar = () => {
 
@@ -12,7 +12,6 @@ const Navbar = () => {
 
     const [isOpen ,setIsOpen] = useState(false)
     const{user}=useUser()
-    //const {OpenSignIn}=useClerk()
     const navigate =useNavigate()
 
 
@@ -51,10 +50,11 @@ const Navbar = () => {
 
             <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/'>Home</Link>
             <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/Releases'>Releases</Link>
-            <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/recommendation'>Recommendation</Link> 
+            <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/recommendation'>Recommendation</Link>
             <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/movies'>Movies</Link>
+            <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/watch-together'>Watch Together</Link>
            {favoriteMovies.length>0 && <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/favorites'>Favorites</Link>}
-            {isAdmin && <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/admin' className='flex items-center gap-1.5'><ShieldIcon className='w-4 h-4'/>Admin</Link>}
+           {isAdmin && <Link onClick={()=>{scrollTo(0, 0); setIsOpen(false)}} to='/admin' className='flex items-center gap-1.5'><ShieldIcon className='w-4 h-4'/>Admin</Link>}
            
         </div>
 

@@ -1,9 +1,8 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import AdminNavbar from '../../components/admin/AdminNavbar'
 import AdminSidebar from '../../components/admin/AdminSidebar'
 import { Outlet } from 'react-router-dom'
-import { useAppContext } from '../../context/AppContext'
-import { useEffect } from 'react'
+import { useAppContext } from '../../context/AppContextCore'
 import Loading from '../../components/Loading'
 
 const Layout = () => {
@@ -11,7 +10,7 @@ const Layout = () => {
   const{isAdmin,fetchIsAdmin}= useAppContext()
 
 useEffect(()=>{
-fetchIsAdmin()},[])
+fetchIsAdmin()},[fetchIsAdmin])
 
 
 

@@ -21,7 +21,8 @@ export const getDashboardData = async(req,res )=>{
             totalBookings:bookings.length,
             totalRevenue:bookings.reduce((acc, booking) => acc + booking.amount, 0),
             activeShows,
-            totalUsers
+            totalUsers,
+            totalUser: totalUsers
 
 
         }
@@ -86,8 +87,8 @@ export const getAllShows= async (req,res)=>{
         }
 
     } 
-    
-    export const getAllUsers = async (req,res)=>{
+
+export const getAllUsers = async (req,res)=>{
     try {
         const users = await Users.find({}).sort({createdAt:-1});
         const paidBookings = await Booking.find({isPaid:true}).sort({createdAt:-1});

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "server": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test:watch-together": "node watchTogether/tests/verifyWatchTogether.mjs"
   },
   "keywords": [],
   "author": "",
@@ -18,13 +19,15 @@
     "cors": "^2.8.5",
     "dotenv": "^17.0.0",
     "express": "^5.1.0",
-    "inngest": "^3.54.0",
+    "inngest": "^4.13.0",
     "mongoose": "^8.16.1",
     "nodemailer": "^7.0.4",
+    "socket.io": "^4.8.3",
     "stripe": "^18.2.1",
     "svix": "^1.68.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "socket.io-client": "^4.8.3"
   }
 }

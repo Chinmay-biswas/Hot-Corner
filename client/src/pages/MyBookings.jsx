@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import BlurCircle from '../components/BlurCircle'
 
 import timeFormat from '../lib/timeFormat'
 import { dateFormat } from '../lib/dateFormat'
-import { useAppContext } from '../context/AppContext'
+import { useAppContext } from '../context/AppContextCore'
 import { Link } from 'react-router-dom'
 
 const MyBookings = () => {
@@ -16,8 +16,9 @@ const MyBookings = () => {
     const[bookings,setBookings] =useState([])
     const[isLoading, setIsLoading]=useState(true)
 
-    const getMyBookings =async ()=>{
+    const getMyBookings = useCallback(async ()=>{
       try {
+        setIsLoading(true)
         const {data}= await axios.get('/api/user/bookings',{
       headers:{Authorization:`Bearer ${await getToken()}`}
     })
@@ -27,14 +28,18 @@ const MyBookings = () => {
     }
       } catch (error) {
         console.log(error)
+      } finally {
+        setIsLoading(false)
       }
-   setIsLoading(false)
-}
+}, [axios, getToken])
     useEffect(()=>{
      if(user){
        getMyBookings()
+     }else{
+       setBookings([])
+       setIsLoading(false)
      }
-    },[user])
+    },[getMyBookings, user])
 
   return !isLoading ?(
     <div className='relative px-6 md:px-16 lg:px-36 pt-30 md:pt-40 min-h-[80vh]'>

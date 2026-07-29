@@ -4,7 +4,7 @@ import {
   PlusSquareIcon,
   ListIcon,
   ListCollapseIcon,
-    UsersIcon,
+  UsersIcon,
 } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { assets } from '../../assets/assets'
