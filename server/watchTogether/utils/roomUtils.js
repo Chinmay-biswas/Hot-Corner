@@ -1,5 +1,6 @@
 const ROOM_CODE_CHARACTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_PLAYBACK_SECONDS = 24 * 60 * 60;
+const getDriveStreamUrl = (driveFileId) => `https://drive.usercontent.google.com/download?id=${encodeURIComponent(driveFileId)}&export=download&confirm=t`;
 
 export const createValidationError = (message) => {
   const error = new Error(message);
@@ -112,16 +113,13 @@ export const normalizeMedia = (value = {}) => {
     const driveFileId = parseDriveFileId(value.driveFileId || value.url);
     if (!driveFileId) throw createValidationError("Select a Google Drive video first.");
 
-    const suppliedUrl = String(value.url || "").trim();
     const suppliedThumbnail = String(value.thumbnail || "").trim();
 
     return {
       source,
       driveFileId,
       title: cleanMediaTitle(value.title, "Google Drive video"),
-      url: isGoogleDriveUrl(suppliedUrl)
-        ? suppliedUrl.slice(0, 1500)
-        : `https://drive.google.com/uc?export=download&id=${driveFileId}`,
+      url: getDriveStreamUrl(driveFileId),
       previewUrl: `https://drive.google.com/file/d/${driveFileId}/preview`,
       thumbnail: isGoogleDriveUrl(suppliedThumbnail) ? suppliedThumbnail.slice(0, 1500) : "",
       mimeType: String(value.mimeType || "").startsWith("video/") ? value.mimeType.slice(0, 120) : "",

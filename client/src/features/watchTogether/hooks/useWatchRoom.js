@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 const getSocketUrl = () => import.meta.env.VITE_BASE_URL || window.location.origin;
+const MAX_ROOM_MESSAGES = 100;
 
 const createProfile = (user) => ({
   displayName: user?.fullName || user?.firstName || "Movie fan",
@@ -28,6 +29,17 @@ const toClientRoom = (room) => room ? {
   ...room,
   playback: toClientPlayback(room.playback, room.serverNow),
 } : room;
+
+const mergeMessages = (current = [], incoming = []) => {
+  const byId = new Map();
+  [...current, ...incoming].forEach((message) => {
+    if (message?.id) byId.set(message.id, message);
+  });
+
+  return [...byId.values()]
+    .sort((left, right) => new Date(left.sentAt).getTime() - new Date(right.sentAt).getTime())
+    .slice(-MAX_ROOM_MESSAGES);
+};
 
 export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
   const profile = useMemo(() => createProfile(user), [user]);
@@ -63,7 +75,11 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
           config,
         );
         if (!data.success) throw new Error(data.message || "Could not open this room.");
-        if (active) setRoom(toClientRoom(data.room));
+        if (active) {
+          const loadedRoom = toClientRoom(data.room);
+          setRoom(loadedRoom);
+          setMessages((current) => mergeMessages(current, loadedRoom.messages));
+        }
       } catch (requestError) {
         if (active) setError(requestError.response?.data?.message || requestError.message || "Could not open this room.");
       } finally {
@@ -100,8 +116,10 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
               setError(response?.error || "Could not join the live room.");
               return;
             }
-            setRoom(toClientRoom(response.room));
+            const joinedRoom = toClientRoom(response.room);
+            setRoom(joinedRoom);
             setParticipants(response.participants || []);
+            setMessages((current) => mergeMessages(current, joinedRoom.messages));
             setCallActive(Boolean(response.callActive));
           });
         });
@@ -113,7 +131,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
         socketInstance.on("disconnect", () => setConnectionStatus("connecting"));
         socketInstance.on("watch:participants", setParticipants);
         socketInstance.on("watch:chat", (message) => {
-          setMessages((current) => [...current.slice(-99), message]);
+          setMessages((current) => mergeMessages(current, [message]));
         });
         socketInstance.on("watch:playback", ({ playback, forceSync, serverNow }) => {
           if (playback) {

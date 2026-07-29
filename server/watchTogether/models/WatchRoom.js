@@ -23,6 +23,18 @@ const mediaSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const chatMessageSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    userId: { type: String, required: true },
+    name: { type: String, required: true, maxlength: 80 },
+    image: { type: String, default: "", maxlength: 500 },
+    text: { type: String, required: true, maxlength: 500 },
+    sentAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
 const watchRoomSchema = new mongoose.Schema(
   {
     code: { type: String, required: true, unique: true, uppercase: true },
@@ -32,6 +44,7 @@ const watchRoomSchema = new mongoose.Schema(
     controllers: { type: [String], default: [] },
     media: { type: mediaSchema, required: true },
     playback: { type: playbackSchema, default: () => ({}) },
+    messages: { type: [chatMessageSchema], default: [] },
     expiresAt: { type: Date, required: true },
   },
   { timestamps: true },

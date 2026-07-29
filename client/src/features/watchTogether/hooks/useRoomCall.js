@@ -21,6 +21,7 @@ export const useRoomCall = ({ socket, emitWithAck }) => {
   const [inCall, setInCall] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
+  const [floatingCallVisible, setFloatingCallVisible] = useState(false);
   const [error, setError] = useState("");
 
   const closePeer = useCallback((socketId) => {
@@ -160,6 +161,7 @@ export const useRoomCall = ({ socket, emitWithAck }) => {
     closeAllPeers();
     stopLocalStream();
     setInCall(false);
+    setFloatingCallVisible(false);
   }, [closeAllPeers, emitWithAck, stopLocalStream]);
 
   const toggleAudio = useCallback(() => {
@@ -195,10 +197,12 @@ export const useRoomCall = ({ socket, emitWithAck }) => {
     inCall,
     audioEnabled,
     videoEnabled,
+    floatingCallVisible,
     error,
     joinCall,
     leaveCall,
     toggleAudio,
     toggleVideo,
+    setFloatingCallVisible,
   };
 };

@@ -191,6 +191,13 @@ export const initializeWatchTogetherSocket = (io, { verifyTokenFn = verifyToken 
           text,
           sentAt: new Date().toISOString(),
         };
+        const writeResult = await WatchRoom.updateOne(
+          { _id: room._id, expiresAt: { $gt: new Date() } },
+          { $push: { messages: { $each: [message], $slice: -100 } } },
+        );
+        if (!writeResult.matchedCount) {
+          return respond(acknowledgement, toSocketError("This room does not exist or has expired."));
+        }
         io.to(roomKey(room.code)).emit("watch:chat", message);
         return respond(acknowledgement, { ok: true, message });
       } catch (error) {
