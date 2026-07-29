@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { SignInButton } from "@clerk/clerk-react";
 import {
@@ -37,9 +37,12 @@ const getInvitationRoomCode = (value) => {
 };
 
 const copyText = async (value) => {
+  const text = String(value || "");
+  if (!text) throw new Error("Nothing is available to copy.");
+
   if (navigator.clipboard?.writeText && window.isSecureContext) {
     try {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard.writeText(text);
       return;
     } catch {
       // Some browsers expose Clipboard but reject it because of page permissions.
@@ -47,13 +50,19 @@ const copyText = async (value) => {
   }
 
   const fallback = document.createElement("textarea");
-  fallback.value = value;
+  fallback.value = text;
   fallback.setAttribute("readonly", "");
-  fallback.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+  fallback.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none";
   document.body.appendChild(fallback);
-  fallback.select();
-  const copied = document.execCommand("copy");
-  fallback.remove();
+  let copied = false;
+  try {
+    fallback.focus({ preventScroll: true });
+    fallback.select();
+    fallback.setSelectionRange(0, text.length);
+    copied = document.execCommand("copy");
+  } finally {
+    fallback.remove();
+  }
   if (!copied) throw new Error("Copy is not available in this browser.");
 };
 
@@ -171,38 +180,62 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
     roomJoinVersion: watchRoom.roomJoinVersion,
   });
   const [changingVideo, setChangingVideo] = useState(false);
+  const [copyFallback, setCopyFallback] = useState(null);
+  const copyFallbackInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!copyFallback) return undefined;
+
+    const frameId = window.requestAnimationFrame(() => {
+      copyFallbackInputRef.current?.focus({ preventScroll: true });
+      copyFallbackInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [copyFallback]);
+
+  const openCopyFallback = (title, value) => setCopyFallback({ title, value });
 
   const copyRoomCode = async () => {
+    const roomCodeValue = watchRoom.room.code;
     try {
-      await copyText(watchRoom.room.code);
+      await copyText(roomCodeValue);
       toast.success("Room code copied.");
     } catch {
-      toast.error("Could not copy the room code.");
+      openCopyFallback("Room code", roomCodeValue);
+      toast.error("Select the room code to copy it.");
     }
   };
 
   const shareInvitation = async () => {
     const invitation = `${window.location.origin}/watch-together/${watchRoom.room.code}`;
 
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: "Watch Together",
-          text: `Join ${watchRoom.room.host.name}'s Watch Together room.`,
-          url: invitation,
-        });
-        toast.success("Room link shared.");
-        return;
-      } catch (shareError) {
-        if (shareError?.name === "AbortError") return;
-      }
+    if (!navigator.share || !window.isSecureContext) {
+      openCopyFallback("Room link", invitation);
+      return;
     }
 
     try {
-      await copyText(invitation);
-      toast.success("Room link copied.");
+      await navigator.share({
+        title: "Watch Together",
+        text: `Join ${watchRoom.room.host.name}'s Watch Together room.`,
+        url: invitation,
+      });
+      toast.success("Room link shared.");
     } catch {
-      toast.error("Could not copy the room link.");
+      openCopyFallback("Room link", invitation);
+    }
+  };
+
+  const copyFallbackValue = async () => {
+    if (!copyFallback) return;
+    try {
+      await copyText(copyFallback.value);
+      setCopyFallback(null);
+      toast.success(`${copyFallback.title} copied.`);
+    } catch {
+      copyFallbackInputRef.current?.focus({ preventScroll: true });
+      copyFallbackInputRef.current?.select();
+      toast.error("Your browser blocked copying. The value is selected.");
     }
   };
 
@@ -327,6 +360,44 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
               actionLabel="Change room video"
               initialMedia={room.media}
             />
+          </section>
+        </div>
+      )}
+
+      {copyFallback && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-label={copyFallback.title}>
+          <section className="w-full max-w-xl border border-white/10 bg-[#111114] p-5 rounded-lg">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <h2 className="font-medium">{copyFallback.title}</h2>
+              <button
+                type="button"
+                onClick={() => setCopyFallback(null)}
+                title="Close"
+                aria-label="Close"
+                className="w-9 h-9 shrink-0 flex items-center justify-center border border-white/15 hover:border-white/40 transition rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={copyFallbackInputRef}
+                value={copyFallback.value}
+                readOnly
+                aria-label={copyFallback.title}
+                onFocus={(event) => event.currentTarget.select()}
+                className="min-w-0 flex-1 h-11 border border-white/10 bg-black/30 px-3 rounded-lg outline-none text-sm text-gray-200"
+              />
+              <button
+                type="button"
+                onClick={copyFallbackValue}
+                title={`Copy ${copyFallback.title.toLowerCase()}`}
+                aria-label={`Copy ${copyFallback.title.toLowerCase()}`}
+                className="w-11 h-11 shrink-0 flex items-center justify-center border border-white/15 hover:border-primary hover:bg-primary/10 transition rounded-lg cursor-pointer"
+              >
+                <Copy className="w-4 h-4" />
+              </button>
+            </div>
           </section>
         </div>
       )}
