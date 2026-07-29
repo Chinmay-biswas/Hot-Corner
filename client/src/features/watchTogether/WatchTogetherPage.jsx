@@ -24,6 +24,39 @@ import { useWatchRoom } from "./hooks/useWatchRoom";
 
 const cleanRoomCode = (value) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
 
+const getInvitationRoomCode = (value) => {
+  const input = String(value || "").trim();
+  try {
+    const url = new URL(input);
+    const match = url.pathname.match(/\/watch-together\/([^/?#]+)/i);
+    if (match?.[1]) return cleanRoomCode(match[1]);
+  } catch {
+    // A room code is not a URL, so it is handled by the normalizer below.
+  }
+  return cleanRoomCode(input);
+};
+
+const copyText = async (value) => {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Some browsers expose Clipboard but reject it because of page permissions.
+    }
+  }
+
+  const fallback = document.createElement("textarea");
+  fallback.value = value;
+  fallback.setAttribute("readonly", "");
+  fallback.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+  document.body.appendChild(fallback);
+  fallback.select();
+  const copied = document.execCommand("copy");
+  fallback.remove();
+  if (!copied) throw new Error("Copy is not available in this browser.");
+};
+
 const pageShell = "min-h-screen px-6 md:px-16 lg:px-24 xl:px-36 pt-30 pb-20";
 
 const SignInRequired = () => (
@@ -67,7 +100,7 @@ const WatchTogetherLobby = ({ user, axios, getToken }) => {
 
   const joinRoom = (event) => {
     event.preventDefault();
-    const roomCode = cleanRoomCode(joinCode);
+    const roomCode = getInvitationRoomCode(joinCode);
     if (roomCode.length < 6) {
       setJoinError("Enter the room code from the invite link.");
       return;
@@ -100,21 +133,21 @@ const WatchTogetherLobby = ({ user, axios, getToken }) => {
 
           <aside className="border border-white/10 bg-white/[0.025] p-5 rounded-lg">
             <h2 className="font-medium">Join a room</h2>
-            <p className="text-sm text-gray-400 mt-1">Paste the code from a shared link.</p>
+            <p className="text-sm text-gray-400 mt-1">Paste a shared link or room code.</p>
             <form onSubmit={joinRoom} className="mt-5 space-y-3">
               <input
                 value={joinCode}
-                onChange={(event) => { setJoinCode(cleanRoomCode(event.target.value)); setJoinError(""); }}
+                onChange={(event) => { setJoinCode(event.target.value.slice(0, 500)); setJoinError(""); }}
                 placeholder="ROOM CODE"
-                className="w-full h-11 border border-white/10 bg-black/30 px-3 rounded-lg outline-none uppercase tracking-[0.12em] text-sm focus:border-primary"
-                maxLength={12}
+                className="w-full h-11 border border-white/10 bg-black/30 px-3 rounded-lg outline-none font-mono text-sm focus:border-primary"
+                maxLength={500}
               />
               {joinError && <p className="text-xs text-red-300">{joinError}</p>}
               <button type="submit" className="w-full h-11 border border-white/20 hover:border-primary hover:bg-primary/10 transition rounded-lg text-sm font-medium cursor-pointer">Join room</button>
             </form>
             <div className="mt-6 pt-5 border-t border-white/10 text-sm text-gray-400 space-y-2">
               <p>Rooms include shared playback, chat, and a browser video call.</p>
-              <p>Room creators can grant playback controls to guests.</p>
+              <p>Only the room creator controls playback and video changes.</p>
             </div>
           </aside>
         </div>
@@ -135,10 +168,34 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
   const call = useRoomCall({ socket: watchRoom.socket, emitWithAck: watchRoom.emitWithAck });
   const [changingVideo, setChangingVideo] = useState(false);
 
-  const copyInvitation = async () => {
-    const invitation = `${window.location.origin}/watch-together/${watchRoom.room.code}`;
+  const copyRoomCode = async () => {
     try {
-      await navigator.clipboard.writeText(invitation);
+      await copyText(watchRoom.room.code);
+      toast.success("Room code copied.");
+    } catch {
+      toast.error("Could not copy the room code.");
+    }
+  };
+
+  const shareInvitation = async () => {
+    const invitation = `${window.location.origin}/watch-together/${watchRoom.room.code}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "Watch Together",
+          text: `Join ${watchRoom.room.host.name}'s Watch Together room.`,
+          url: invitation,
+        });
+        toast.success("Room link shared.");
+        return;
+      } catch (shareError) {
+        if (shareError?.name === "AbortError") return;
+      }
+    }
+
+    try {
+      await copyText(invitation);
       toast.success("Room link copied.");
     } catch {
       toast.error("Could not copy the room link.");
@@ -168,7 +225,11 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
   const { room } = watchRoom;
   const connectionLabel = watchRoom.connectionStatus === "connected"
     ? "Live"
-    : watchRoom.connectionStatus === "error" ? "Offline" : "Reconnecting";
+    : watchRoom.connectionStatus === "offline" ? "Offline"
+      : watchRoom.connectionStatus === "error" ? "Connection problem" : "Reconnecting";
+  const connectionColor = connectionLabel === "Live"
+    ? "text-primary"
+    : connectionLabel === "Reconnecting" ? "text-amber-200" : "text-red-300";
 
   return (
     <main className={pageShell}>
@@ -184,13 +245,24 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-xs text-gray-400"><Radio className={`w-3.5 h-3.5 ${connectionLabel === "Live" ? "text-primary" : "text-amber-200"}`} /> {connectionLabel}</div>
+            <div className="flex items-center gap-2 text-xs text-gray-400"><Radio className={`w-3.5 h-3.5 ${connectionColor}`} /> {connectionLabel}</div>
             <h1 className="mt-1 truncate text-xl font-semibold">{room.host.name}'s room</h1>
           </div>
-          <span className="hidden sm:inline text-sm text-gray-400">Code: <span className="font-mono tracking-[0.16em] text-gray-200">{room.code}</span></span>
+          <div className="hidden sm:flex items-center gap-2 text-sm text-gray-400">
+            <span>Code: <span className="font-mono tracking-[0.16em] text-gray-200">{room.code}</span></span>
+            <button
+              type="button"
+              onClick={copyRoomCode}
+              title="Copy room code"
+              aria-label="Copy room code"
+              className="w-8 h-8 flex items-center justify-center border border-white/15 hover:border-primary hover:bg-primary/10 transition rounded-lg cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <button
             type="button"
-            onClick={copyInvitation}
+            onClick={shareInvitation}
             className="h-10 px-3 flex items-center gap-2 border border-white/15 hover:border-primary hover:bg-primary/10 transition rounded-lg text-sm cursor-pointer"
           >
             <Share2 className="w-4 h-4" /> Share
@@ -203,7 +275,7 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
 
         <div className="grid xl:grid-cols-[minmax(0,1fr)_22rem] gap-6 mt-6">
           <div className="min-w-0 space-y-4">
-            <MediaStage room={room} onPlayback={watchRoom.updatePlayback} />
+            <MediaStage room={room} onPlayback={watchRoom.updatePlayback} call={call} callActive={watchRoom.callActive} />
             {room.isHost && (
               <div className="flex justify-end">
                 <button

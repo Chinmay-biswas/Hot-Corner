@@ -36,11 +36,24 @@ export const formatBytes = (bytes) => {
   return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 };
 
+export const getGoogleDriveStreamUrl = (driveFileId) => (
+  `https://drive.usercontent.google.com/download?id=${encodeURIComponent(driveFileId)}&export=download&confirm=t`
+);
+
+export const getGoogleDriveStreamCandidates = ({ driveFileId, url }) => {
+  const fileId = String(driveFileId || "").trim();
+  return [...new Set([
+    url,
+    fileId && getGoogleDriveStreamUrl(fileId),
+    fileId && `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`,
+  ].filter(Boolean))];
+};
+
 export const toDriveMedia = (file) => ({
   source: "drive",
   driveFileId: file.id,
   title: file.name,
-  url: file.webContentLink || `https://drive.google.com/uc?export=download&id=${file.id}`,
+  url: getGoogleDriveStreamUrl(file.id),
   thumbnail: file.thumbnailLink || "",
   mimeType: file.mimeType || "",
 });

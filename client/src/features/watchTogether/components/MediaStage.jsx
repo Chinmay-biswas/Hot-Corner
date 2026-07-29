@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactPlayer from "react-player";
-import { Expand, FastForward, Pause, Play, Rewind, Volume2 } from "lucide-react";
-import { formatPlaybackTime, getPlaybackSyncPlan } from "../lib/media";
+import { Expand, FastForward, Pause, Play, Rewind, VideoIcon, Volume2 } from "lucide-react";
+import FloatingCallOverlay from "./FloatingCallOverlay";
+import {
+  formatPlaybackTime,
+  getGoogleDriveStreamCandidates,
+  getPlaybackSyncPlan,
+} from "../lib/media";
 
 const REMOTE_EVENT_SUPPRESSION_MS = 1200;
 const DRIFT_CHECK_INTERVAL_MS = 1000;
+const FULLSCREEN_TOOL_HIDE_DELAY_MS = 2400;
 
-const MediaStage = ({ room, onPlayback }) => {
+const MediaStage = ({ room, onPlayback, call, callActive }) => {
   const playerRef = useRef(null);
   const driveVideoRef = useRef(null);
   const stageRef = useRef(null);
@@ -15,17 +21,29 @@ const MediaStage = ({ room, onPlayback }) => {
   const lastPlaybackStateRef = useRef(null);
   const lastReportedActionRef = useRef({ key: "", sentAt: 0 });
   const scrubbingRef = useRef(false);
+  const fullscreenTimerRef = useRef(null);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(0.85);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [driveStreamIndex, setDriveStreamIndex] = useState(0);
   const [driveFallback, setDriveFallback] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFullscreenCall, setShowFullscreenCall] = useState(true);
+  const [fullscreenToolsVisible, setFullscreenToolsVisible] = useState(false);
   const [error, setError] = useState("");
 
   const media = room.media;
   const isYoutube = media.source === "youtube";
+  const driveStreamCandidates = useMemo(
+    () => isYoutube ? [] : getGoogleDriveStreamCandidates(media),
+    [isYoutube, media],
+  );
+  const driveStreamUrl = driveStreamCandidates[driveStreamIndex] || media.url;
   const canControl = room.isHost && !driveFallback;
   const playback = room.playback;
+  const inCall = Boolean(call?.inCall);
+  const setFloatingCallVisible = call?.setFloatingCallVisible;
 
   const getCurrentTime = useCallback(() => {
     if (isYoutube) return Number(playerRef.current?.getCurrentTime?.() || 0);
@@ -47,6 +65,8 @@ const MediaStage = ({ room, onPlayback }) => {
   }, []);
 
   const syncPlayback = useCallback((forceSync = false) => {
+    if (driveFallback) return;
+
     const plan = getPlaybackSyncPlan({
       playback,
       localTime: getCurrentTime(),
@@ -70,36 +90,74 @@ const MediaStage = ({ room, onPlayback }) => {
       if (!video) return;
 
       if (playback.isPlaying && video.paused) {
-        video.play().catch(() => setError("Interact with the Drive video once to allow playback in this browser."));
+        video.play().catch(() => setError("Interact with the video once to allow playback in this browser."));
       } else if (!playback.isPlaying && !video.paused) {
         video.pause();
       }
     }
-  }, [duration, getCurrentTime, isYoutube, playback, setLocalPlaybackRate, suppressLocalEvents]);
+  }, [driveFallback, duration, getCurrentTime, isYoutube, playback, setLocalPlaybackRate, suppressLocalEvents]);
 
   useEffect(() => {
+    setDriveStreamIndex(0);
     setDriveFallback(false);
     setDuration(0);
     setCurrentTime(0);
     setPlaybackRate(1);
+    setError("");
     lastPlaybackStateRef.current = null;
-  }, [media.url]);
+  }, [media.driveFileId, media.url]);
 
   useEffect(() => {
     syncPlayback(Boolean(playback.forceSync));
   }, [playback.forceSync, playback.updatedAt, syncPlayback]);
 
   useEffect(() => {
-    if (!playback.isPlaying) return undefined;
+    if (!playback.isPlaying || driveFallback) return undefined;
 
     const intervalId = window.setInterval(() => syncPlayback(false), DRIFT_CHECK_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
-  }, [playback.isPlaying, syncPlayback]);
+  }, [driveFallback, playback.isPlaying, syncPlayback]);
 
   useEffect(() => {
     const video = driveVideoRef.current;
     if (video) video.volume = volume;
-  }, [volume, media.url]);
+  }, [driveStreamUrl, volume]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    window.clearTimeout(fullscreenTimerRef.current);
+    if (!isFullscreen) {
+      setFullscreenToolsVisible(false);
+      setShowFullscreenCall(true);
+      return undefined;
+    }
+
+    setFullscreenToolsVisible(true);
+    fullscreenTimerRef.current = window.setTimeout(
+      () => setFullscreenToolsVisible(false),
+      FULLSCREEN_TOOL_HIDE_DELAY_MS,
+    );
+    return () => window.clearTimeout(fullscreenTimerRef.current);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    setFloatingCallVisible?.(Boolean(isFullscreen && showFullscreenCall && inCall));
+  }, [inCall, isFullscreen, setFloatingCallVisible, showFullscreenCall]);
+
+  const revealFullscreenTools = () => {
+    if (!isFullscreen) return;
+    window.clearTimeout(fullscreenTimerRef.current);
+    setFullscreenToolsVisible(true);
+    fullscreenTimerRef.current = window.setTimeout(
+      () => setFullscreenToolsVisible(false),
+      FULLSCREEN_TOOL_HIDE_DELAY_MS,
+    );
+  };
 
   const reportPlayback = useCallback(async ({ isPlaying, time = getCurrentTime(), forceSync = false }) => {
     if (!canControl || Date.now() < suppressUntilRef.current) return;
@@ -157,12 +215,45 @@ const MediaStage = ({ room, onPlayback }) => {
     }
   }, [canControl, playback.isPlaying, reportPlayback]);
 
+  const handleDriveError = useCallback(() => {
+    if (driveStreamIndex < driveStreamCandidates.length - 1) {
+      setDriveStreamIndex((current) => current + 1);
+      setError("Trying another direct Google Drive stream.");
+      return;
+    }
+
+    setDriveFallback(true);
+    setError("This file only opens in Google Drive preview, which cannot be synchronized by a website.");
+  }, [driveStreamCandidates.length, driveStreamIndex]);
+
   const togglePlay = () => reportPlayback({ isPlaying: !playback.isPlaying });
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) stageRef.current?.requestFullscreen?.();
-    else document.exitFullscreen?.();
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === stageRef.current) await document.exitFullscreen?.();
+      else await stageRef.current?.requestFullscreen?.();
+    } catch {
+      setError("Fullscreen is not available in this browser.");
+    }
   };
+
+  const toggleFullscreenCall = async () => {
+    revealFullscreenTools();
+    if (!inCall) {
+      try {
+        await call?.joinCall();
+        setShowFullscreenCall(true);
+      } catch (callError) {
+        setError(callError.message || "Could not join the room call.");
+      }
+      return;
+    }
+    setShowFullscreenCall((current) => !current);
+  };
+
+  const callButtonLabel = inCall
+    ? showFullscreenCall ? "Hide room call" : "Show room call"
+    : "Join room call";
 
   return (
     <section className="border border-white/10 bg-white/[0.025] rounded-lg overflow-hidden">
@@ -171,12 +262,17 @@ const MediaStage = ({ room, onPlayback }) => {
           <h1 className="truncate text-base font-medium">{media.title}</h1>
           <p className="text-xs text-gray-500 mt-0.5">{isYoutube ? "YouTube" : "Google Drive"}</p>
         </div>
-        <span className={`text-xs ${room.isHost ? "text-primary" : "text-gray-500"}`}>
-          {room.isHost ? "You control playback" : "Room creator controls"}
+        <span className={`text-xs ${room.isHost && !driveFallback ? "text-primary" : "text-gray-500"}`}>
+          {driveFallback ? "Drive preview cannot sync" : room.isHost ? "You control playback" : "Room creator controls"}
         </span>
       </div>
 
-      <div ref={stageRef} className="relative aspect-video bg-black">
+      <div
+        ref={stageRef}
+        className="relative aspect-video bg-black"
+        onMouseMove={revealFullscreenTools}
+        onTouchStart={revealFullscreenTools}
+      >
         {isYoutube ? (
           <ReactPlayer
             ref={playerRef}
@@ -193,6 +289,7 @@ const MediaStage = ({ room, onPlayback }) => {
             onProgress={({ playedSeconds }) => reportProgress(playedSeconds)}
             onPlay={() => reportPlayback({ isPlaying: true })}
             onPause={() => reportPlayback({ isPlaying: false })}
+            onEnded={() => reportPlayback({ isPlaying: false, time: duration, forceSync: true })}
             onError={() => setError("This YouTube video cannot be played in an embedded room.")}
           />
         ) : driveFallback ? (
@@ -205,8 +302,9 @@ const MediaStage = ({ room, onPlayback }) => {
           />
         ) : (
           <video
+            key={driveStreamUrl}
             ref={driveVideoRef}
-            src={media.url}
+            src={driveStreamUrl}
             className="w-full h-full object-contain"
             playsInline
             preload="metadata"
@@ -217,91 +315,115 @@ const MediaStage = ({ room, onPlayback }) => {
             onTimeUpdate={(event) => reportProgress(event.currentTarget.currentTime)}
             onPlay={() => reportPlayback({ isPlaying: true })}
             onPause={() => reportPlayback({ isPlaying: false })}
-            onError={() => {
-              setDriveFallback(true);
-              setError("Google Drive opened its preview because this file could not stream directly.");
-            }}
+            onEnded={(event) => reportPlayback({
+              isPlaying: false,
+              time: event.currentTarget.duration || duration,
+              forceSync: true,
+            })}
+            onError={handleDriveError}
           />
+        )}
+
+        {isFullscreen && (inCall || callActive) && (
+          <button
+            type="button"
+            onClick={toggleFullscreenCall}
+            title={callButtonLabel}
+            aria-label={callButtonLabel}
+            className={`absolute top-3 right-3 z-40 w-8 h-8 flex items-center justify-center border border-white/30 bg-black/65 hover:border-primary transition rounded-lg cursor-pointer ${fullscreenToolsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+          >
+            <VideoIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {isFullscreen && inCall && showFullscreenCall && (
+          <FloatingCallOverlay call={call} containerRef={stageRef} />
         )}
       </div>
 
-      <div className="px-4 py-3 border-t border-white/10 space-y-3">
-        {error && <p className="text-xs text-amber-200">{error}</p>}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => seek(getCurrentTime() - 10)}
-            disabled={!canControl}
-            title="Back 10 seconds"
-            aria-label="Back 10 seconds"
-            className="w-9 h-9 flex items-center justify-center border border-white/15 hover:border-white/40 disabled:opacity-40 transition rounded-lg cursor-pointer disabled:cursor-not-allowed"
-          >
-            <Rewind className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={togglePlay}
-            disabled={!canControl}
-            title={playback.isPlaying ? "Pause for everyone" : "Play for everyone"}
-            aria-label={playback.isPlaying ? "Pause for everyone" : "Play for everyone"}
-            className="w-10 h-9 flex items-center justify-center bg-primary hover:bg-primary-dull disabled:opacity-40 transition rounded-lg cursor-pointer disabled:cursor-not-allowed"
-          >
-            {playback.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          </button>
-          <button
-            type="button"
-            onClick={() => seek(getCurrentTime() + 10)}
-            disabled={!canControl}
-            title="Forward 10 seconds"
-            aria-label="Forward 10 seconds"
-            className="w-9 h-9 flex items-center justify-center border border-white/15 hover:border-white/40 disabled:opacity-40 transition rounded-lg cursor-pointer disabled:cursor-not-allowed"
-          >
-            <FastForward className="w-4 h-4" />
-          </button>
-          <span className="ml-auto text-xs tabular-nums text-gray-400">{formatPlaybackTime(currentTime)} / {formatPlaybackTime(duration)}</span>
+      {driveFallback ? (
+        <div className="px-4 py-3 border-t border-white/10 text-xs text-amber-100">
+          <p>{error || "Google Drive preview is using its own controls."}</p>
+          <p className="mt-1 text-gray-400">Use a shared MP4/WebM file or YouTube for synchronized Watch Together controls.</p>
         </div>
-        <input
-          type="range"
-          min="0"
-          max={Math.max(duration, 1)}
-          step="0.1"
-          value={Math.min(currentTime, Math.max(duration, 1))}
-          onPointerDown={() => { scrubbingRef.current = true; }}
-          onPointerUp={finishScrubbing}
-          onPointerCancel={finishScrubbing}
-          onKeyDown={() => { scrubbingRef.current = true; }}
-          onKeyUp={finishScrubbing}
-          onChange={(event) => {
-            previewSeek(event.target.value);
-            if (!scrubbingRef.current) seek(event.target.value);
-          }}
-          disabled={!canControl}
-          aria-label="Playback position"
-          className="w-full accent-primary disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
-        />
-        <div className="flex items-center gap-2">
-          <Volume2 className="w-4 h-4 text-gray-400" />
+      ) : (
+        <div className="px-4 py-3 border-t border-white/10 space-y-3">
+          {error && <p className="text-xs text-amber-200">{error}</p>}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => seek(getCurrentTime() - 10)}
+              disabled={!canControl}
+              title="Back 10 seconds"
+              aria-label="Back 10 seconds"
+              className="w-9 h-9 flex items-center justify-center border border-white/15 hover:border-white/40 disabled:opacity-40 transition rounded-lg cursor-pointer disabled:cursor-not-allowed"
+            >
+              <Rewind className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={togglePlay}
+              disabled={!canControl}
+              title={playback.isPlaying ? "Pause for everyone" : "Play for everyone"}
+              aria-label={playback.isPlaying ? "Pause for everyone" : "Play for everyone"}
+              className="w-10 h-9 flex items-center justify-center bg-primary hover:bg-primary-dull disabled:opacity-40 transition rounded-lg cursor-pointer disabled:cursor-not-allowed"
+            >
+              {playback.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => seek(getCurrentTime() + 10)}
+              disabled={!canControl}
+              title="Forward 10 seconds"
+              aria-label="Forward 10 seconds"
+              className="w-9 h-9 flex items-center justify-center border border-white/15 hover:border-white/40 disabled:opacity-40 transition rounded-lg cursor-pointer disabled:cursor-not-allowed"
+            >
+              <FastForward className="w-4 h-4" />
+            </button>
+            <span className="ml-auto text-xs tabular-nums text-gray-400">{formatPlaybackTime(currentTime)} / {formatPlaybackTime(duration)}</span>
+          </div>
           <input
             type="range"
             min="0"
-            max="1"
-            step="0.05"
-            value={volume}
-            onChange={(event) => setVolume(Number(event.target.value))}
-            aria-label="Local volume"
-            className="w-24 accent-primary cursor-pointer"
+            max={Math.max(duration, 1)}
+            step="0.1"
+            value={Math.min(currentTime, Math.max(duration, 1))}
+            onPointerDown={() => { scrubbingRef.current = true; }}
+            onPointerUp={finishScrubbing}
+            onPointerCancel={finishScrubbing}
+            onKeyDown={() => { scrubbingRef.current = true; }}
+            onKeyUp={finishScrubbing}
+            onChange={(event) => {
+              previewSeek(event.target.value);
+              if (!scrubbingRef.current) seek(event.target.value);
+            }}
+            disabled={!canControl}
+            aria-label="Playback position"
+            className="w-full accent-primary disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
           />
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            title="Toggle fullscreen"
-            aria-label="Toggle fullscreen"
-            className="ml-auto w-9 h-9 flex items-center justify-center border border-white/15 hover:border-white/40 transition rounded-lg cursor-pointer"
-          >
-            <Expand className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <Volume2 className="w-4 h-4 text-gray-400" />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={(event) => setVolume(Number(event.target.value))}
+              aria-label="Local volume"
+              className="w-24 accent-primary cursor-pointer"
+            />
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              title="Toggle fullscreen"
+              aria-label="Toggle fullscreen"
+              className="ml-auto w-9 h-9 flex items-center justify-center border border-white/15 hover:border-white/40 transition rounded-lg cursor-pointer"
+            >
+              <Expand className="w-4 h-4" />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 };

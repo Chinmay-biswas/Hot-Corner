@@ -20,7 +20,7 @@ import { initializeWatchTogetherSocket } from './watchTogether/socket/watchToget
 
 
 const app = express();
-const port = 3000;
+const port = Number(process.env.PORT || 3000);
 const allowedOrigins = (process.env.CLIENT_URL || '')
   .split(',')
   .map((origin) => origin.trim())
@@ -58,5 +58,9 @@ app.use('/api/watch-together', watchTogetherRouter)
 
 initializeWatchTogetherSocket(io)
 
+// Vercel invokes the exported HTTP server. Local development owns the listener.
+if (!process.env.VERCEL) {
+  httpServer.listen(port, () => console.log(`server listening at http://localhost:${port}`));
+}
 
-httpServer.listen(port, () => console.log(`server listening at http://localhost:${port}`));
+export default httpServer;

@@ -394,6 +394,16 @@ try {
   const socketChat = await emitWithAck(guestSocket, "watch:chat", { text: "  Hello   from  the room  " });
   assert.equal(socketChat.ok, true);
   assert.equal((await guestChatEvent).text, "Hello from the room");
+  const roomWithChat = await WatchRoom.findOne({ code: roomCode }).lean();
+  assert.equal(roomWithChat.messages.length, 1);
+  assert.equal(roomWithChat.messages[0].text, "Hello from the room");
+
+  await closeSocket(guestSocket);
+  guestSocket = await connectSocket(socketUrl, "guest-token");
+  const guestRejoinWithHistory = await emitWithAck(guestSocket, "watch:join", { roomCode, displayName: "Socket Guest" });
+  assert.equal(guestRejoinWithHistory.ok, true);
+  assert.equal(guestRejoinWithHistory.room.messages.length, 1);
+  assert.equal(guestRejoinWithHistory.room.messages[0].text, "Hello from the room");
 
   const socketBlankChat = await emitWithAck(guestSocket, "watch:chat", { text: "   " });
   assert.equal(socketBlankChat.ok, false);

@@ -50,6 +50,7 @@ const RoomCallPanel = ({ callActive, call }) => {
                   key={remote.socketId}
                   stream={remote.stream}
                   label={remote.participant?.name || "Guest"}
+                  muted={call.floatingCallVisible}
                 />
               ))}
             </div>
