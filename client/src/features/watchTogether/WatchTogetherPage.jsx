@@ -23,6 +23,43 @@ import { useRoomCall } from "./hooks/useRoomCall";
 import { useWatchRoom } from "./hooks/useWatchRoom";
 
 const cleanRoomCode = (value) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+const MEDIA_PREPARATION_POLL_MS = 4_000;
+const MEDIA_PREPARATION_TIMEOUT_MS = 20 * 60 * 1000;
+
+const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+const prepareDriveMediaForRoom = async ({ axios, getToken, media, onStatus, forceTranscode = false }) => {
+  const getConfig = async () => ({ headers: { Authorization: `Bearer ${await getToken()}` } });
+  let response;
+  try {
+    response = await axios.post("/api/watch-together/media/prepare", { media, forceTranscode }, await getConfig());
+  } catch (requestError) {
+    throw new Error(requestError.response?.data?.message || requestError.message || "Could not prepare this Drive video.");
+  }
+
+  if (response.data?.status === "ready" && response.data.media) return response.data.media;
+  if (response.data?.status !== "processing" || !response.data.publicId) {
+    throw new Error(response.data?.message || "Could not prepare this Drive video.");
+  }
+
+  const deadline = Date.now() + MEDIA_PREPARATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    onStatus?.("Creating a browser-compatible MP4 for synchronized playback. Large videos can take a few minutes.");
+    await wait(MEDIA_PREPARATION_POLL_MS);
+    try {
+      const { data } = await axios.get("/api/watch-together/media/prepare", {
+        ...(await getConfig()),
+        params: { publicId: response.data.publicId, title: response.data.title || media.title },
+      });
+      if (data?.status === "ready" && data.media) return data.media;
+      if (data?.status !== "processing") throw new Error(data?.message || "Video conversion could not finish.");
+    } catch (requestError) {
+      throw new Error(requestError.response?.data?.message || requestError.message || "Video conversion could not finish.");
+    }
+  }
+
+  throw new Error("Video conversion is still running. Please try this Drive file again in a few minutes.");
+};
 
 const getInvitationRoomCode = (value) => {
   const input = String(value || "").trim();
@@ -86,6 +123,13 @@ const WatchTogetherLobby = ({ user, axios, getToken }) => {
   const [creating, setCreating] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState("");
+  const prepareDriveMedia = (media, onStatus, forceTranscode = false) => prepareDriveMediaForRoom({
+    axios,
+    getToken,
+    media,
+    onStatus,
+    forceTranscode,
+  });
 
   const createRoom = async (media) => {
     setCreating(true);
@@ -137,7 +181,12 @@ const WatchTogetherLobby = ({ user, axios, getToken }) => {
                 <p className="text-sm text-gray-400 mt-0.5">Choose one source to begin.</p>
               </div>
             </div>
-            <SourceSetup onSubmitMedia={createRoom} submitting={creating} actionLabel="Create watch room" />
+            <SourceSetup
+              onSubmitMedia={createRoom}
+              prepareDriveMedia={prepareDriveMedia}
+              submitting={creating}
+              actionLabel="Create watch room"
+            />
           </section>
 
           <aside className="border border-white/10 bg-white/[0.025] p-5 rounded-lg">
@@ -178,10 +227,21 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
     socket: watchRoom.socket,
     emitWithAck: watchRoom.emitWithAck,
     roomJoinVersion: watchRoom.roomJoinVersion,
+    axios,
+    getToken,
   });
   const [changingVideo, setChangingVideo] = useState(false);
+  const [preparingCurrentMedia, setPreparingCurrentMedia] = useState(false);
+  const [currentMediaPreparationStatus, setCurrentMediaPreparationStatus] = useState("");
   const [copyFallback, setCopyFallback] = useState(null);
   const copyFallbackInputRef = useRef(null);
+  const prepareDriveMedia = (media, onStatus, forceTranscode = false) => prepareDriveMediaForRoom({
+    axios,
+    getToken,
+    media,
+    onStatus,
+    forceTranscode,
+  });
 
   useEffect(() => {
     if (!copyFallback) return undefined;
@@ -240,7 +300,8 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
   };
 
   const changeMedia = async (media) => {
-    await watchRoom.updateMedia(media);
+    const preparedMedia = media.source === "drive" ? await prepareDriveMedia(media) : media;
+    await watchRoom.updateMedia(preparedMedia);
     setChangingVideo(false);
     toast.success("The room video was changed.");
   };
@@ -260,6 +321,21 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
   }
 
   const { room } = watchRoom;
+  const prepareCurrentDriveMedia = async ({ forceTranscode = false } = {}) => {
+    if (room.media.source !== "drive") return;
+    setPreparingCurrentMedia(true);
+    setCurrentMediaPreparationStatus("Checking this Drive video for synchronized playback.");
+    try {
+      const preparedMedia = await prepareDriveMedia(room.media, setCurrentMediaPreparationStatus, forceTranscode);
+      await watchRoom.updateMedia(preparedMedia);
+      toast.success("The synchronized video is ready.");
+    } catch (prepareError) {
+      toast.error(prepareError.message || "Could not prepare this Drive video.");
+    } finally {
+      setPreparingCurrentMedia(false);
+      setCurrentMediaPreparationStatus("");
+    }
+  };
   const connectionLabel = watchRoom.connectionStatus === "connected"
     ? "Live"
     : watchRoom.connectionStatus === "offline" ? "Offline"
@@ -312,7 +388,14 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
 
         <div className="grid xl:grid-cols-[minmax(0,1fr)_22rem] gap-6 mt-6">
           <div className="min-w-0 space-y-4">
-            <MediaStage room={room} onPlayback={watchRoom.updatePlayback} call={call} />
+            <MediaStage
+              room={room}
+              onPlayback={watchRoom.updatePlayback}
+              onPrepareDriveMedia={prepareCurrentDriveMedia}
+              preparingDriveMedia={preparingCurrentMedia}
+              drivePreparationStatus={currentMediaPreparationStatus}
+              call={call}
+            />
             {room.isHost && (
               <div className="flex justify-end">
                 <button
@@ -357,6 +440,7 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
             </div>
             <SourceSetup
               onSubmitMedia={changeMedia}
+              prepareDriveMedia={prepareDriveMedia}
               actionLabel="Change room video"
               initialMedia={room.media}
             />

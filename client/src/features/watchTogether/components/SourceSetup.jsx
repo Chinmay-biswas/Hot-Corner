@@ -19,8 +19,8 @@ import {
 } from "../lib/googleDrive";
 import { extractYouTubeId, formatBytes, MAX_GOOGLE_DRIVE_FILE_SIZE, toDriveMedia } from "../lib/media";
 
-const SourceSetup = ({ onSubmitMedia, submitting = false, actionLabel = "Create room", initialMedia }) => {
-  const [source, setSource] = useState(initialMedia?.source || "youtube");
+const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, actionLabel = "Create room", initialMedia }) => {
+  const [source, setSource] = useState(initialMedia?.source === "drive" ? "drive" : "youtube");
   const [youtubeUrl, setYoutubeUrl] = useState(initialMedia?.url || "");
   const [title, setTitle] = useState(initialMedia?.title || "");
   const [driveToken, setDriveToken] = useState("");
@@ -29,7 +29,9 @@ const SourceSetup = ({ onSubmitMedia, submitting = false, actionLabel = "Create 
   const [shareWithRoom, setShareWithRoom] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [prepareStatus, setPrepareStatus] = useState("");
   const [error, setError] = useState("");
 
   const loadDriveFiles = async (token) => {
@@ -107,16 +109,27 @@ const SourceSetup = ({ onSubmitMedia, submitting = false, actionLabel = "Create 
       setError("Select a Google Drive video first.");
       return;
     }
+    if (!shareWithRoom) {
+      setError("Enable room sharing so everyone in this room can view the selected Drive file.");
+      return;
+    }
 
     try {
       let file = selectedDriveFile;
-      if (shareWithRoom) {
-        await shareGoogleDriveFileWithRoom(driveToken, file.id);
-        file = await getGoogleDriveVideo(driveToken, file.id);
+      await shareGoogleDriveFileWithRoom(driveToken, file.id);
+      file = await getGoogleDriveVideo(driveToken, file.id);
+      let media = { ...toDriveMedia(file), title: title || file.name };
+      if (prepareDriveMedia) {
+        setIsPreparing(true);
+        setPrepareStatus("Checking this video for synchronized playback.");
+        media = await prepareDriveMedia(media, setPrepareStatus);
       }
-      await onSubmitMedia({ ...toDriveMedia(file), title: title || file.name });
+      await onSubmitMedia(media);
     } catch (submitError) {
       setError(submitError.message || "Could not save this Google Drive video.");
+    } finally {
+      setIsPreparing(false);
+      setPrepareStatus("");
     }
   };
 
@@ -180,7 +193,7 @@ const SourceSetup = ({ onSubmitMedia, submitting = false, actionLabel = "Create 
                 <label className="inline-flex items-center gap-2 h-9 px-3 border border-white/15 hover:border-primary transition rounded-lg text-xs cursor-pointer">
                   {isUploading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   {isUploading ? `${uploadProgress}%` : "Upload"}
-                  <input type="file" accept="video/*" className="sr-only" onChange={uploadFile} disabled={isUploading} />
+                  <input type="file" accept="video/*" className="sr-only" onChange={uploadFile} disabled={isUploading || isPreparing} />
                 </label>
               </div>
               <div className="max-h-52 overflow-y-auto pr-1 space-y-2">
@@ -231,14 +244,15 @@ const SourceSetup = ({ onSubmitMedia, submitting = false, actionLabel = "Create 
       </label>
 
       {error && <p className="text-sm text-red-300">{error}</p>}
+      {isPreparing && <p className="text-sm text-amber-200">{prepareStatus || "Preparing a browser-compatible shared video."}</p>}
 
       <button
         type="submit"
-        disabled={submitting || isUploading}
+        disabled={submitting || isUploading || isPreparing}
         className="w-full min-h-12 flex items-center justify-center gap-2 bg-primary hover:bg-primary-dull disabled:opacity-60 transition rounded-lg font-medium cursor-pointer disabled:cursor-not-allowed"
       >
-        {submitting ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
-        {actionLabel}
+        {submitting || isPreparing ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
+        {isPreparing ? "Preparing video" : actionLabel}
       </button>
     </form>
   );

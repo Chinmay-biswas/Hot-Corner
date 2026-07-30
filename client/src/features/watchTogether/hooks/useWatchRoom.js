@@ -4,6 +4,7 @@ import { io } from "socket.io-client";
 const getSocketUrl = () => import.meta.env.VITE_BASE_URL || window.location.origin;
 const MAX_ROOM_MESSAGES = 100;
 const MAX_SOCKET_AUTH_RETRY_DELAY_MS = 15_000;
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 const isAuthenticationError = (socketError) => /authentication|unauthori[sz]ed|token/i.test(socketError?.message || "");
 const browserIsOnline = () => typeof navigator === "undefined" || navigator.onLine;
@@ -102,6 +103,7 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
     let socketInstance;
     let authenticationRetries = 0;
     let reconnectTimer;
+    let presenceHeartbeatId;
 
     const setOfflineState = () => {
       setConnectionStatus("offline");
@@ -203,6 +205,9 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
       setOfflineState();
       socketInstance.disconnect();
     };
+    const sendPresenceHeartbeat = () => {
+      if (socketInstance?.connected) socketInstance.emit("watch:presence-heartbeat");
+    };
 
     socketInstance.on("connect", onConnect);
     socketInstance.on("connect_error", onConnectError);
@@ -229,10 +234,12 @@ export const useWatchRoom = ({ roomCode, axios, getToken, user }) => {
 
     if (browserIsOnline()) socketInstance.connect();
     else setOfflineState();
+    presenceHeartbeatId = window.setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_INTERVAL_MS);
 
     return () => {
       disposed = true;
       window.clearTimeout(reconnectTimer);
+      window.clearInterval(presenceHeartbeatId);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       socketInstance?.io.off("reconnect_attempt", onReconnectAttempt);

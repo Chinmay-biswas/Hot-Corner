@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { verifyToken } from "@clerk/express";
 import WatchRoom from "../models/WatchRoom.js";
+import { createRoomRealtimeState } from "../services/roomRealtimeState.js";
 import {
   cleanDisplayName,
   cleanImageUrl,
@@ -11,8 +12,6 @@ import {
 } from "../utils/roomUtils.js";
 import { canControlRoom, isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
 
-const activeParticipants = new Map();
-const callParticipants = new Map();
 const participantLeaveTimers = new Map();
 const DEFAULT_PRESENCE_GRACE_MS = 12_000;
 const roomKey = (code) => `watch-room:${code}`;
@@ -36,66 +35,77 @@ const findActiveRoom = async (roomCode) => {
   return room;
 };
 
-const removeParticipant = (code, socketId) => {
-  const roomMembers = activeParticipants.get(code);
-  roomMembers?.delete(socketId);
-  if (roomMembers?.size === 0) activeParticipants.delete(code);
-};
-
-const removeCallParticipant = (code, socketId) => {
-  const activeCall = callParticipants.get(code);
-  activeCall?.delete(socketId);
-  if (activeCall?.size === 0) callParticipants.delete(code);
-};
-
 const clearParticipantLeaveTimer = (socketId) => {
   const timer = participantLeaveTimers.get(socketId);
   if (timer) clearTimeout(timer);
   participantLeaveTimers.delete(socketId);
 };
 
-const removeSocketFromRoom = (socket) => {
+const listParticipants = async (state, room) => {
+  const byUser = new Map();
+  const members = await state.listParticipants(room.code);
+
+  for (const participant of members) {
+    const existing = byUser.get(participant.userId);
+    const shouldReplace = !existing
+      || (participant.connected && !existing.connected)
+      || Number(participant.lastSeen || 0) > Number(existing.lastSeen || 0);
+    if (shouldReplace) byUser.set(participant.userId, participant);
+  }
+
+  return [...byUser.values()].map((participant) => ({
+    userId: participant.userId,
+    socketId: participant.socketId,
+    name: participant.name,
+    image: participant.image,
+    isHost: isRoomHost(room, participant.userId),
+    canControl: canControlRoom(room, participant.userId),
+  }));
+};
+
+const broadcastParticipants = async (io, state, room) => {
+  io.to(roomKey(room.code)).emit("watch:participants", await listParticipants(state, room));
+};
+
+const broadcastCallState = async (io, state, roomCode) => {
+  const socketIds = await state.listCallParticipants(roomCode);
+  io.to(roomKey(roomCode)).emit("watch:call-state", {
+    active: Boolean(socketIds.length),
+    socketIds,
+  });
+};
+
+const broadcastRoomState = async (io, state, roomCode) => {
+  try {
+    const room = await findActiveRoom(roomCode);
+    await Promise.all([
+      broadcastParticipants(io, state, room),
+      broadcastCallState(io, state, room.code),
+    ]);
+  } catch {
+    // The room can expire while a socket is moving between rooms.
+  }
+};
+
+const removeSocketFromRoom = async (socket, state) => {
   const code = socket.data.roomCode;
   if (!code) return "";
 
   clearParticipantLeaveTimer(socket.id);
-  removeParticipant(code, socket.id);
-  removeCallParticipant(code, socket.id);
+  await Promise.all([
+    state.removeParticipant(code, socket.id),
+    state.leaveCall(code, socket.id),
+  ]);
   socket.data.roomCode = null;
+  socket.data.inCall = false;
   return code;
 };
 
-const listParticipants = (room) => {
-  const members = activeParticipants.get(room.code) || new Map();
-  const byUser = new Map();
-
-  for (const participant of members.values()) {
-    if (!byUser.has(participant.userId)) {
-      byUser.set(participant.userId, {
-        ...participant,
-        isHost: isRoomHost(room, participant.userId),
-        canControl: canControlRoom(room, participant.userId),
-      });
-    }
-  }
-
-  return [...byUser.values()];
-};
-
-const broadcastParticipants = (io, room) => {
-  io.to(roomKey(room.code)).emit("watch:participants", listParticipants(room));
-};
-
-const scheduleParticipantLeave = (io, code, socketId, presenceGraceMs) => {
+const scheduleParticipantLeave = (io, state, code, socketId, presenceGraceMs) => {
   const removeAndBroadcast = async () => {
     participantLeaveTimers.delete(socketId);
-    removeParticipant(code, socketId);
-    try {
-      const room = await WatchRoom.findOne({ code, expiresAt: { $gt: new Date() } });
-      if (room) broadcastParticipants(io, room);
-    } catch {
-      // The room may have expired while the reconnect grace period elapsed.
-    }
+    await state.removeParticipant(code, socketId);
+    await broadcastRoomState(io, state, code);
   };
 
   if (presenceGraceMs <= 0) {
@@ -107,8 +117,6 @@ const scheduleParticipantLeave = (io, code, socketId, presenceGraceMs) => {
   participantLeaveTimers.set(socketId, timer);
 };
 
-const callState = (roomCode) => [...(callParticipants.get(roomCode) || new Set())];
-
 const ensureJoinedRoom = async (socket) => {
   if (!socket.data.roomCode) throw createValidationError("Join a room before using its controls.");
   return findActiveRoom(socket.data.roomCode);
@@ -116,9 +124,15 @@ const ensureJoinedRoom = async (socket) => {
 
 export const initializeWatchTogetherSocket = (
   io,
-  { verifyTokenFn = verifyToken, presenceGraceMs = DEFAULT_PRESENCE_GRACE_MS } = {},
+  {
+    verifyTokenFn = verifyToken,
+    presenceGraceMs = DEFAULT_PRESENCE_GRACE_MS,
+    realtimeState,
+  } = {},
 ) => {
   const reconnectGraceMs = Math.max(0, Number(presenceGraceMs) || 0);
+  const state = realtimeState || createRoomRealtimeState();
+
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error("Authentication is required."));
@@ -134,13 +148,19 @@ export const initializeWatchTogetherSocket = (
   });
 
   io.on("connection", (socket) => {
+    socket.data.inCall = false;
+
     socket.on("watch:join", async (payload = {}, acknowledgement) => {
       try {
         const room = await findActiveRoom(payload.roomCode);
-        if (socket.data.roomCode) socket.leave(roomKey(socket.data.roomCode));
-        removeSocketFromRoom(socket);
-        socket.join(roomKey(room.code));
+        const previousCode = socket.data.roomCode;
+        if (previousCode) {
+          socket.leave(roomKey(previousCode));
+          await removeSocketFromRoom(socket, state);
+          await broadcastRoomState(io, state, previousCode);
+        }
 
+        socket.join(roomKey(room.code));
         const participant = {
           userId: socket.data.userId,
           socketId: socket.id,
@@ -149,20 +169,26 @@ export const initializeWatchTogetherSocket = (
         };
         socket.data.roomCode = room.code;
         socket.data.profile = participant;
-        if (!activeParticipants.has(room.code)) activeParticipants.set(room.code, new Map());
-        activeParticipants.get(room.code).set(socket.id, participant);
+        await state.upsertParticipant(room.code, participant);
 
-        broadcastParticipants(io, room);
+        const participants = await listParticipants(state, room);
+        const callSocketIds = await state.listCallParticipants(room.code);
+        io.to(roomKey(room.code)).emit("watch:participants", participants);
         socket.emit("watch:room-ready", { roomCode: room.code });
         return respond(acknowledgement, {
           ok: true,
           room: presentWatchRoom(room, socket.data.userId),
-          participants: listParticipants(room),
-          callActive: Boolean(callParticipants.get(room.code)?.size),
+          participants,
+          callActive: Boolean(callSocketIds.length),
         });
       } catch (error) {
         return respond(acknowledgement, toSocketError(error.message || "Could not join this room."));
       }
+    });
+
+    socket.on("watch:presence-heartbeat", async () => {
+      if (!socket.data.roomCode) return;
+      await state.touch(socket.data.roomCode, socket.id);
     });
 
     socket.on("watch:playback", async (payload = {}, acknowledgement) => {
@@ -206,7 +232,7 @@ export const initializeWatchTogetherSocket = (
       }
     });
 
-    socket.on("watch:controller", async (payload = {}, acknowledgement) => {
+    socket.on("watch:controller", async (_payload = {}, acknowledgement) => {
       try {
         const room = await ensureJoinedRoom(socket);
         if (!isRoomHost(room, socket.data.userId)) {
@@ -250,18 +276,17 @@ export const initializeWatchTogetherSocket = (
     socket.on("watch:call-join", async (_payload, acknowledgement) => {
       try {
         const room = await ensureJoinedRoom(socket);
-        if (!callParticipants.has(room.code)) callParticipants.set(room.code, new Set());
-        const roomCall = callParticipants.get(room.code);
-        const existingSockets = [...roomCall].filter((socketId) => socketId !== socket.id);
-        roomCall.add(socket.id);
+        socket.data.inCall = true;
+        const existingSockets = await state.joinCall(room.code, socket.id);
 
         socket.to(roomKey(room.code)).emit("watch:call-participant-joined", {
           socketId: socket.id,
           participant: socket.data.profile,
         });
-        io.to(roomKey(room.code)).emit("watch:call-state", { active: true, socketIds: callState(room.code) });
+        await broadcastCallState(io, state, room.code);
         return respond(acknowledgement, { ok: true, existingSockets });
       } catch (error) {
+        socket.data.inCall = false;
         return respond(acknowledgement, toSocketError(error.message || "Could not join the call."));
       }
     });
@@ -270,28 +295,28 @@ export const initializeWatchTogetherSocket = (
       const code = socket.data.roomCode;
       if (!code) return respond(acknowledgement, { ok: true });
 
-      const roomCall = callParticipants.get(code);
-      roomCall?.delete(socket.id);
-      if (roomCall?.size === 0) callParticipants.delete(code);
-      io.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
-      io.to(roomKey(code)).emit("watch:call-state", {
-        active: Boolean(callParticipants.get(code)?.size),
-        socketIds: callState(code),
-      });
+      const wasInCall = socket.data.inCall;
+      socket.data.inCall = false;
+      await state.leaveCall(code, socket.id);
+      if (wasInCall) io.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
+      await broadcastCallState(io, state, code);
       return respond(acknowledgement, { ok: true });
     });
 
-    socket.on("watch:webrtc-signal", (payload = {}, acknowledgement) => {
+    socket.on("watch:webrtc-signal", async (payload = {}, acknowledgement) => {
       const code = socket.data.roomCode;
       const targetSocketId = String(payload.to || "");
-      const activeCall = callParticipants.get(code);
-      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      const signalType = String(payload.signal?.type || "");
+      if (!code || !targetSocketId || !["offer", "answer", "candidate"].includes(signalType)) {
+        return respond(acknowledgement, toSocketError("That call signal is invalid."));
+      }
 
-      if (!code || !targetSocket || !activeCall?.has(socket.id) || !activeCall.has(targetSocketId)) {
+      const activeCall = await state.listCallParticipants(code);
+      if (!activeCall.includes(socket.id) || !activeCall.includes(targetSocketId)) {
         return respond(acknowledgement, toSocketError("That call participant is no longer available."));
       }
 
-      targetSocket.emit("watch:webrtc-signal", {
+      io.to(targetSocketId).emit("watch:webrtc-signal", {
         from: socket.id,
         participant: socket.data.profile,
         signal: payload.signal,
@@ -303,14 +328,16 @@ export const initializeWatchTogetherSocket = (
       const code = socket.data.roomCode;
       if (!code) return;
 
-      removeCallParticipant(code, socket.id);
+      const wasInCall = socket.data.inCall;
       socket.data.roomCode = null;
-      socket.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
-      io.to(roomKey(code)).emit("watch:call-state", {
-        active: Boolean(callParticipants.get(code)?.size),
-        socketIds: callState(code),
-      });
-      scheduleParticipantLeave(io, code, socket.id, reconnectGraceMs);
+      socket.data.inCall = false;
+      void (async () => {
+        await state.leaveCall(code, socket.id);
+        await state.markParticipantDisconnected(code, socket.id, reconnectGraceMs);
+        if (wasInCall) io.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
+        await broadcastCallState(io, state, code);
+        scheduleParticipantLeave(io, state, code, socket.id, reconnectGraceMs);
+      })();
     });
   });
 };

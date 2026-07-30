@@ -15,6 +15,8 @@ import recommendationRouter from './routes/recommendationRoutes.js';
 import { stripeWebhooks } from './controllers/stripeWebhooks.js';
 import watchTogetherRouter from './watchTogether/routes/watchTogetherRoutes.js';
 import { initializeWatchTogetherSocket } from './watchTogether/socket/watchTogetherSocket.js';
+import { configureWatchTogetherRealtime } from './watchTogether/services/realtimeAdapter.js';
+import { createRoomRealtimeState } from './watchTogether/services/roomRealtimeState.js';
 
 
 
@@ -32,11 +34,12 @@ const corsOptions = {
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: corsOptions,
-  pingTimeout: 60_000,
+  pingTimeout: 120_000,
 });
 
 
 await connectDB()
+const watchTogetherRealtime = await configureWatchTogetherRealtime(io);
 
 //stripe webhooks route
 app.use('/api/stripe', express.raw({type: 'application/json'}),stripeWebhooks)
@@ -59,7 +62,9 @@ app.use('/api/user',userRouter)
 app.use('/api/recommendations',recommendationRouter)
 app.use('/api/watch-together', watchTogetherRouter)
 
-initializeWatchTogetherSocket(io)
+initializeWatchTogetherSocket(io, {
+  realtimeState: createRoomRealtimeState({ redisClient: watchTogetherRealtime.redisClient }),
+})
 
 // Vercel invokes the exported HTTP server. Local development owns the listener.
 if (!process.env.VERCEL) {

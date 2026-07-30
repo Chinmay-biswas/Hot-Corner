@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactPlayer from "react-player";
-import { Expand, FastForward, Pause, Play, Rewind, VideoIcon, Volume2 } from "lucide-react";
+import { Expand, FastForward, LoaderCircle, Pause, Play, Rewind, VideoIcon, Volume2 } from "lucide-react";
 import FloatingCallOverlay from "./FloatingCallOverlay";
 import {
   formatPlaybackTime,
@@ -12,7 +12,14 @@ const REMOTE_EVENT_SUPPRESSION_MS = 1200;
 const DRIFT_CHECK_INTERVAL_MS = 1000;
 const FULLSCREEN_TOOL_HIDE_DELAY_MS = 2400;
 
-const MediaStage = ({ room, onPlayback, call }) => {
+const MediaStage = ({
+  room,
+  onPlayback,
+  onPrepareDriveMedia,
+  preparingDriveMedia = false,
+  drivePreparationStatus = "",
+  call,
+}) => {
   const playerRef = useRef(null);
   const driveVideoRef = useRef(null);
   const stageRef = useRef(null);
@@ -35,12 +42,13 @@ const MediaStage = ({ room, onPlayback, call }) => {
 
   const media = room.media;
   const isYoutube = media.source === "youtube";
+  const isDrive = media.source === "drive";
   const driveStreamCandidates = useMemo(
-    () => isYoutube ? [] : getGoogleDriveStreamCandidates(media),
-    [isYoutube, media],
+    () => isYoutube ? [] : isDrive ? getGoogleDriveStreamCandidates(media) : [media.url].filter(Boolean),
+    [isDrive, isYoutube, media],
   );
   const driveStreamUrl = driveStreamCandidates[driveStreamIndex] || media.url;
-  const canControl = room.isHost && !driveFallback;
+  const canControl = room.isHost && !(isDrive && driveFallback);
   const playback = room.playback;
   const inCall = Boolean(call?.inCall);
   const setFloatingCallVisible = call?.setFloatingCallVisible;
@@ -105,7 +113,7 @@ const MediaStage = ({ room, onPlayback, call }) => {
     setPlaybackRate(1);
     setError("");
     lastPlaybackStateRef.current = null;
-  }, [media.driveFileId, media.url]);
+  }, [media.cloudinaryPublicId, media.driveFileId, media.source, media.url]);
 
   useEffect(() => {
     syncPlayback(Boolean(playback.forceSync));
@@ -222,6 +230,10 @@ const MediaStage = ({ room, onPlayback, call }) => {
   }, [canControl, playback.isPlaying, reportPlayback]);
 
   const handleDriveError = useCallback(() => {
+    if (!isDrive) {
+      setError("This shared video could not be played in the browser.");
+      return;
+    }
     if (driveStreamIndex < driveStreamCandidates.length - 1) {
       setDriveStreamIndex((current) => current + 1);
       setError("Trying another direct Google Drive stream.");
@@ -230,7 +242,7 @@ const MediaStage = ({ room, onPlayback, call }) => {
 
     setDriveFallback(true);
     setError("This file only opens in Google Drive preview, which cannot be synchronized by a website.");
-  }, [driveStreamCandidates.length, driveStreamIndex]);
+  }, [driveStreamCandidates.length, driveStreamIndex, isDrive]);
 
   const togglePlay = () => reportPlayback({ isPlaying: !playback.isPlaying });
 
@@ -266,10 +278,10 @@ const MediaStage = ({ room, onPlayback, call }) => {
       <div className="min-h-14 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10">
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-medium">{media.title}</h1>
-          <p className="text-xs text-gray-500 mt-0.5">{isYoutube ? "YouTube" : "Google Drive"}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{isYoutube ? "YouTube" : isDrive ? "Google Drive" : "Shared video"}</p>
         </div>
         <span className={`text-xs ${room.isHost && !driveFallback ? "text-primary" : "text-gray-500"}`}>
-          {driveFallback ? "Drive preview cannot sync" : room.isHost ? "You control playback" : "Room creator controls"}
+          {isDrive && driveFallback ? "Drive preview cannot sync" : room.isHost ? "You control playback" : "Room creator controls"}
         </span>
       </div>
 
@@ -298,7 +310,7 @@ const MediaStage = ({ room, onPlayback, call }) => {
             onEnded={() => reportPlayback({ isPlaying: false, time: duration, forceSync: true })}
             onError={() => setError("This YouTube video cannot be played in an embedded room.")}
           />
-        ) : driveFallback ? (
+        ) : isDrive && driveFallback ? (
           <iframe
             title={media.title}
             src={media.previewUrl}
@@ -330,7 +342,7 @@ const MediaStage = ({ room, onPlayback, call }) => {
           />
         )}
 
-        {driveFallback && !isFullscreen && (
+        {isDrive && driveFallback && !isFullscreen && (
           <button
             type="button"
             onClick={toggleFullscreen}
@@ -363,10 +375,24 @@ const MediaStage = ({ room, onPlayback, call }) => {
         )}
       </div>
 
-      {driveFallback ? (
+      {isDrive && driveFallback ? (
         <div className="px-4 py-3 border-t border-white/10 text-xs text-amber-100">
           <p>{error || "Google Drive preview is using its own controls."}</p>
           <p className="mt-1 text-gray-400">Use a shared MP4/WebM file or YouTube for synchronized Watch Together controls.</p>
+          {room.isHost && onPrepareDriveMedia && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => onPrepareDriveMedia({ forceTranscode: true })}
+                disabled={preparingDriveMedia}
+                className="h-9 px-3 inline-flex items-center gap-2 border border-amber-200/40 hover:border-primary hover:bg-primary/10 disabled:opacity-60 transition rounded-lg text-xs font-medium cursor-pointer disabled:cursor-not-allowed"
+              >
+                {preparingDriveMedia ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <VideoIcon className="w-3.5 h-3.5" />}
+                {preparingDriveMedia ? "Preparing synced video" : "Make synchronized copy"}
+              </button>
+              {preparingDriveMedia && <span className="text-gray-400">{drivePreparationStatus}</span>}
+            </div>
+          )}
         </div>
       ) : (
         <div className="px-4 py-3 border-t border-white/10 space-y-3">

@@ -7,6 +7,8 @@ import {
   updateRoomMedia,
   updateRoomPlayback,
 } from "../controllers/roomController.js";
+import { getWatchTogetherIceServers } from "../controllers/iceController.js";
+import { getPreparedWatchMedia, prepareWatchMedia } from "../controllers/mediaController.js";
 
 const watchTogetherRouter = express.Router();
 
@@ -21,6 +23,9 @@ const requireWatchTogetherUser = (req, res, next) => {
 };
 
 watchTogetherRouter.use(requireWatchTogetherUser);
+watchTogetherRouter.get("/ice-servers", getWatchTogetherIceServers);
+watchTogetherRouter.post("/media/prepare", prepareWatchMedia);
+watchTogetherRouter.get("/media/prepare", getPreparedWatchMedia);
 watchTogetherRouter.post("/rooms", createWatchRoom);
 watchTogetherRouter.get("/rooms/:roomCode", getWatchRoom);
 watchTogetherRouter.post("/rooms/:roomCode/join", joinWatchRoom);
