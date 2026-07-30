@@ -13,6 +13,42 @@ const createServiceError = (message, statusCode = 500) => {
   return error;
 };
 
+const isPendingCloudinaryError = (error) => [404, 420, 423].includes(Number(error?.http_code));
+
+const createCloudinaryError = (error, action) => {
+  const statusCode = Number(error?.http_code) || 0;
+  const message = String(error?.message || "");
+  const normalizedMessage = message.toLowerCase();
+
+  console.error(`Watch Together Cloudinary ${action} failed (${statusCode || "unknown"}):`, message);
+
+  if (statusCode === 401 || statusCode === 403 || /api key|authorization|credential/.test(normalizedMessage)) {
+    return createServiceError(
+      "Cloudinary rejected the server credentials. Check the Cloudinary environment variables in the hotcorner-server Vercel project and redeploy it.",
+      502,
+    );
+  }
+
+  if (statusCode === 413 || /file size|too large|size limit|maximum.*size|exceeds.*limit/.test(normalizedMessage)) {
+    return createServiceError(
+      "This Drive video is larger than the current Cloudinary plan can convert. Use a browser-compatible H.264/AAC MP4 from Google Drive, or use a media plan that supports multi-gigabyte conversion.",
+      422,
+    );
+  }
+
+  if (/remote|fetch|download|url/.test(normalizedMessage)) {
+    return createServiceError(
+      "Cloudinary could not download this Drive video. Confirm that anyone with the room link can view the file, then try again.",
+      502,
+    );
+  }
+
+  return createServiceError(
+    "Cloudinary could not process this Drive video. Check the provider's file-size limit and try a browser-compatible MP4/WebM file.",
+    502,
+  );
+};
+
 const getDriveDownloadUrl = (driveFileId, resourceKey = "") => {
   const params = new URLSearchParams({ id: driveFileId, export: "download", confirm: "t" });
   if (resourceKey) params.set("resourcekey", resourceKey);
@@ -67,14 +103,20 @@ export const createDriveTranscoder = ({ client = cloudinary } = {}) => {
 
     ensureConfigured();
     const publicId = `${CLOUDINARY_FOLDER}/${randomUUID().replace(/-/g, "")}`;
-    await client.uploader.upload(getDriveDownloadUrl(media.driveFileId, media.resourceKey), {
-      resource_type: "video",
-      public_id: publicId,
-      overwrite: false,
-      eager: [{ format: "mp4", video_codec: "h264", audio_codec: "aac", flags: "progressive" }],
-      eager_async: true,
-      async: true,
-    });
+    const upload = client.uploader.upload_large || client.uploader.upload;
+    try {
+      await upload.call(client.uploader, getDriveDownloadUrl(media.driveFileId, media.resourceKey), {
+        resource_type: "video",
+        public_id: publicId,
+        overwrite: false,
+        chunk_size: 20_000_000,
+        eager: [{ format: "mp4", video_codec: "h264", audio_codec: "aac", flags: "progressive" }],
+        eager_async: true,
+        async: true,
+      });
+    } catch (error) {
+      throw createCloudinaryError(error, "upload");
+    }
 
     return {
       status: "processing",
@@ -93,8 +135,8 @@ export const createDriveTranscoder = ({ client = cloudinary } = {}) => {
     try {
       resource = await client.api.resource(publicId, { resource_type: "video", eager: true });
     } catch (error) {
-      if (Number(error?.http_code) === 404) return { status: "processing" };
-      throw createServiceError("The video conversion service could not be checked. Please try again.", 502);
+      if (isPendingCloudinaryError(error)) return { status: "processing" };
+      throw createCloudinaryError(error, "status check");
     }
 
     const media = createCloudinaryWatchMedia({ publicId, title, eager: resource.eager });
