@@ -41,6 +41,10 @@ const fetchIsAdmin = useCallback(async ()=>{
     } catch (error) {
         console.error(error)
         setIsAdmin(false)
+        if(location.pathname.startsWith('/admin')){
+            navigate('/')
+            toast.error('Admin access is required.')
+        }
         
     }
 }, [getToken, location.pathname, navigate])

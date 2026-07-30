@@ -7,6 +7,8 @@ import "dotenv/config";
 import connectDB from "../../configs/db.js";
 import User from "../../models/User.js";
 import WatchRoom from "../models/WatchRoom.js";
+import WatchRoomHistory from "../models/WatchRoomHistory.js";
+import WatchRoomSession from "../models/WatchRoomSession.js";
 import {
   createWatchRoom,
   getWatchRoom,
@@ -15,6 +17,10 @@ import {
   updateRoomMedia,
   updateRoomPlayback,
 } from "../controllers/roomController.js";
+import {
+  getWatchTogetherAdminOverview,
+  getWatchTogetherRoomDetail,
+} from "../controllers/adminController.js";
 import { getWatchTogetherIceServers } from "../controllers/iceController.js";
 import { createDriveTranscoder } from "../services/driveTranscoder.js";
 import { getR2UploadStatus } from "../services/r2Storage.js";
@@ -54,7 +60,7 @@ const sampleDriveMedia = {
   mimeType: "video/mp4",
 };
 
-const invokeController = async (controller, { userId, params = {}, body = {} }) => {
+const invokeController = async (controller, { userId, params = {}, body = {}, query = {} }) => {
   let response;
   const res = {
     statusCode: 200,
@@ -67,7 +73,7 @@ const invokeController = async (controller, { userId, params = {}, body = {} }) 
       return bodyValue;
     },
   };
-  await controller({ auth: () => ({ userId }), params, body }, res);
+  await controller({ auth: () => ({ userId }), params, body, query }, res);
   assert.ok(response, "Controller did not return a JSON response.");
   return response;
 };
@@ -451,6 +457,9 @@ try {
   assert.equal(created.body.room.isHost, true);
   assert.equal(created.body.room.canControl, true);
   const roomCode = created.body.room.code;
+  const roomHistory = await WatchRoomHistory.findOne({ roomId: created.body.room.id }).lean();
+  assert.equal(roomHistory.code, roomCode);
+  assert.equal(roomHistory.hostId, userIds.host);
 
   const fetchedByGuest = await invokeController(getWatchRoom, {
     userId: userIds.guest,
@@ -570,6 +579,7 @@ try {
   assert.equal(guestJoin.room.canControl, false);
   const participants = await participantUpdate;
   assert.equal(participants.length, 2);
+  assert.equal(await WatchRoomSession.countDocuments({ roomCode }), 2);
 
   const socketGuestPlaybackDenied = await emitWithAck(guestSocket, "watch:playback", { isPlaying: true, currentTime: 12 });
   assert.equal(socketGuestPlaybackDenied.ok, false);
@@ -630,6 +640,10 @@ try {
   const socketHostMedia = await emitWithAck(hostSocket, "watch:media", { media: sampleYouTubeMedia });
   assert.equal(socketHostMedia.ok, true);
   assert.equal((await guestMediaEvent).room.media.source, "youtube");
+  guestSocket.emit("watch:presence-heartbeat");
+  await wait(50);
+  const roomHistoryAfterGuestHeartbeat = await WatchRoomHistory.findOne({ roomId: created.body.room.id }).lean();
+  assert.equal(roomHistoryAfterGuestHeartbeat.media.source, "youtube");
 
   const guestCallState = waitForEvent(guestSocket, "watch:call-state");
   const hostCall = await emitWithAck(hostSocket, "watch:call-join");
@@ -653,6 +667,9 @@ try {
   const guestReconnectJoin = await emitWithAck(guestSocket, "watch:join", { roomCode, displayName: "Socket Guest" });
   assert.equal(guestReconnectJoin.ok, true);
   assert.equal((await guestRoomReadyAfterReconnect).roomCode, roomCode);
+  const activeGuestSessions = await WatchRoomSession.find({ roomCode, userId: userIds.guest, endedAt: null }).lean();
+  assert.equal(activeGuestSessions.length, 1);
+  assert.ok(activeGuestSessions[0].connectionCount >= 2);
 
   const hostCallRejoined = waitForEvent(hostSocket, "watch:call-participant-joined");
   const guestRejoinedCall = await emitWithAck(guestSocket, "watch:call-join");
@@ -676,6 +693,23 @@ try {
   });
   assert.equal(outsiderSignal.ok, false);
 
+  const watchOverview = await invokeController(getWatchTogetherAdminOverview, {
+    userId: userIds.host,
+    query: { range: "all", limit: "25" },
+  });
+  assert.equal(watchOverview.statusCode, 200);
+  const overviewRoom = watchOverview.body.rooms.find((room) => room.code === roomCode);
+  assert.ok(overviewRoom);
+  assert.ok(overviewRoom.viewerCount >= 3);
+
+  const watchRoomDetail = await invokeController(getWatchTogetherRoomDetail, {
+    userId: userIds.host,
+    params: { roomId: overviewRoom.id },
+  });
+  assert.equal(watchRoomDetail.statusCode, 200);
+  assert.ok(watchRoomDetail.body.sessions.some((session) => session.user.id === userIds.host));
+  assert.ok(watchRoomDetail.body.sessions.some((session) => session.user.id === userIds.guest));
+
   const hostCallLeave = waitForEvent(hostSocket, "watch:call-participant-left");
   const guestLeave = await emitWithAck(guestSocket, "watch:call-leave");
   assert.equal(guestLeave.ok, true);
@@ -683,7 +717,7 @@ try {
   const hostLeave = await emitWithAck(hostSocket, "watch:call-leave");
   assert.equal(hostLeave.ok, true);
 
-  console.log("Watch Together verification passed: API permissions, media validation, socket sync, chat, and call signaling.");
+  console.log("Watch Together verification passed: API permissions, media validation, socket sync, chat, call signaling, and admin activity history.");
 } finally {
   await Promise.all([
     closeSocket(hostSocket),
@@ -693,6 +727,9 @@ try {
   ]);
   if (socketServer) await new Promise((resolve) => socketServer.close(resolve));
   if (httpServer?.listening) await closeServer(httpServer);
+  await wait(200);
+  await WatchRoomSession.deleteMany({ userId: { $in: Object.values(userIds) } });
+  await WatchRoomHistory.deleteMany({ hostId: { $in: Object.values(userIds) } });
   await WatchRoom.deleteMany({ hostId: { $in: Object.values(userIds) } });
   await User.deleteMany({ _id: { $in: Object.values(userIds) } });
   await mongoose.disconnect();

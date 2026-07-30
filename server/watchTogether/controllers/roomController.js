@@ -12,6 +12,7 @@ import {
 } from "../utils/roomUtils.js";
 import { isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
 import { getCompletedR2Media } from "../services/r2Storage.js";
+import { recordWatchRoomActivity, recordWatchRoomCreated } from "../services/watchAnalyticsService.js";
 
 const getUserId = (req) => req.auth?.().userId;
 
@@ -47,6 +48,15 @@ const resolveRoomMedia = async (media, userId) => (
     : media
 );
 
+const recordAnalyticsSafely = async (action, task) => {
+  try {
+    await task();
+  } catch (error) {
+    // Analytics must never prevent a member from using a live room.
+    console.error(`Watch Together ${action} analytics failed:`, error.message);
+  }
+};
+
 export const createWatchRoom = async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -67,6 +77,7 @@ export const createWatchRoom = async (req, res) => {
 
       try {
         await room.save();
+        await recordAnalyticsSafely("creation", () => recordWatchRoomCreated(room));
         return res.status(201).json({ success: true, room: presentWatchRoom(room, userId) });
       } catch (error) {
         if (error?.code !== 11000 || attempt === 4) throw error;
@@ -115,6 +126,7 @@ export const updateRoomPlayback = async (req, res) => {
 
     room.playback = normalizePlayback(req.body);
     await room.save();
+    await recordAnalyticsSafely("playback", () => recordWatchRoomActivity(room, "playback"));
     return res.json({ success: true, room: presentWatchRoom(room, userId) });
   } catch (error) {
     return sendError(res, error);
@@ -134,6 +146,7 @@ export const updateRoomMedia = async (req, res) => {
     room.media = normalizeMedia(await resolveRoomMedia(req.body.media, userId));
     room.playback = { isPlaying: false, currentTime: 0, updatedAt: new Date() };
     await room.save();
+    await recordAnalyticsSafely("media change", () => recordWatchRoomActivity(room, "media_changed"));
     return res.json({ success: true, room: presentWatchRoom(room, userId) });
   } catch (error) {
     return sendError(res, error);

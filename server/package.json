@@ -6,7 +6,8 @@
   "scripts": {
     "server": "nodemon server.js",
     "start": "node server.js",
-    "test:watch-together": "node watchTogether/tests/verifyWatchTogether.mjs"
+    "test:watch-together": "node watchTogether/tests/verifyWatchTogether.mjs",
+    "test:admin": "node tests/verifyAdmin.mjs"
   },
   "keywords": [],
   "author": "",
