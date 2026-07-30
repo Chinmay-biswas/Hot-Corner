@@ -188,6 +188,40 @@ try {
   const completedPreparation = await transcoder.getStatus(processingPreparation);
   assert.equal(completedPreparation.status, "ready");
   assert.equal(completedPreparation.media.source, "cloudinary");
+  const pendingCloudinaryTranscoder = createDriveTranscoder({
+    client: {
+      config: () => ({ cloud_name: "test-cloud", api_key: "test-key", api_secret: "test-secret" }),
+      uploader: { upload: async () => ({}) },
+      api: {
+        resource: async () => {
+          const error = new Error("The video is still processing.");
+          error.http_code = 423;
+          throw error;
+        },
+      },
+    },
+  });
+  assert.equal(
+    (await pendingCloudinaryTranscoder.getStatus({ publicId: processingPreparation.publicId, title: "Pending video" })).status,
+    "processing",
+  );
+  const oversizedCloudinaryTranscoder = createDriveTranscoder({
+    client: {
+      config: () => ({ cloud_name: "test-cloud", api_key: "test-key", api_secret: "test-secret" }),
+      uploader: {
+        upload: async () => {
+          const error = new Error("File size exceeds the maximum size.");
+          error.http_code = 413;
+          throw error;
+        },
+      },
+      api: {},
+    },
+  });
+  await assert.rejects(
+    oversizedCloudinaryTranscoder.prepare(incompatibleDriveMedia),
+    (error) => error.statusCode === 422 && /larger than the current Cloudinary plan/.test(error.message),
+  );
   const unavailableTranscoder = createDriveTranscoder({
     client: { config: () => ({}), uploader: { upload: async () => ({}) }, api: {} },
   });

@@ -5,7 +5,11 @@ const CONNECTION_TIMEOUT_MS = 5_000;
 
 const getRedisUrl = () => String(
   process.env.WATCH_TOGETHER_REDIS_URL || process.env.REDIS_URL || "",
-).trim();
+)
+  .trim()
+  // Accept a common copy/paste form such as REDIS_URL=rediss://... while
+  // keeping the actual environment variable value as the Redis connection URL.
+  .replace(/^(?:WATCH_TOGETHER_)?REDIS_URL=/i, "");
 
 const waitForConnection = (client) => new Promise((resolve, reject) => {
   const timeoutId = setTimeout(() => reject(new Error("Redis connection timed out.")), CONNECTION_TIMEOUT_MS);
