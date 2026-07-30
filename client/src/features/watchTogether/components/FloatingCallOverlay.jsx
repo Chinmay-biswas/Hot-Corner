@@ -7,14 +7,33 @@ const MIN_HEIGHT = 104;
 
 const clamp = (value, minimum, maximum) => Math.min(Math.max(value, minimum), maximum);
 
-const CallVideo = ({ stream, label, muted = false, videoEnabled = true }) => {
+const CallVideo = ({
+  stream,
+  label,
+  videoEnabled = true,
+  socketId,
+  onPlaybackStart,
+  onPlaybackStalled,
+}) => {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (!videoRef.current) return;
-    videoRef.current.srcObject = stream || null;
-    videoRef.current.play().catch(() => undefined);
-  }, [stream]);
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    const playVideo = () => video.play().catch(() => undefined);
+    video.muted = true;
+    video.srcObject = stream || null;
+    if (stream) playVideo();
+
+    const videoTracks = stream?.getVideoTracks?.() || [];
+    videoTracks.forEach((track) => track.addEventListener("unmute", playVideo));
+    return () => {
+      videoTracks.forEach((track) => track.removeEventListener("unmute", playVideo));
+      video.pause();
+      video.srcObject = null;
+    };
+  }, [stream, videoEnabled]);
 
   return (
     <div className="relative min-h-0 overflow-hidden bg-black">
@@ -23,8 +42,12 @@ const CallVideo = ({ stream, label, muted = false, videoEnabled = true }) => {
           ref={videoRef}
           autoPlay
           playsInline
-          muted={muted}
+          muted
           onLoadedMetadata={(event) => event.currentTarget.play().catch(() => undefined)}
+          onCanPlay={(event) => event.currentTarget.play().catch(() => undefined)}
+          onPlaying={() => onPlaybackStart?.(socketId)}
+          onWaiting={() => onPlaybackStalled?.(socketId)}
+          onStalled={() => onPlaybackStalled?.(socketId)}
           className="w-full h-full object-cover"
         />
       ) : (
@@ -134,11 +157,14 @@ const FloatingCallOverlay = ({ call, containerRef }) => {
   };
 
   const streams = [
-    { id: "local", stream: call.localStream, label: "You", muted: true, videoEnabled: call.videoEnabled },
+    { id: "local", stream: call.localStream, label: "You", videoEnabled: call.videoEnabled },
     ...call.remoteStreams.map((remote) => ({
       id: remote.socketId,
       stream: remote.stream,
       label: remote.participant?.name || "Guest",
+      socketId: remote.socketId,
+      onPlaybackStart: call.markRemoteVideoPlaying,
+      onPlaybackStalled: call.reportRemoteVideoStalled,
     })),
   ];
   const displayPosition = position || { x: EDGE_GAP, y: EDGE_GAP };

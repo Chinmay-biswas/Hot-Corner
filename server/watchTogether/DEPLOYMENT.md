@@ -12,17 +12,29 @@ STUN discovers direct peer routes, but it cannot relay traffic when a network fi
 
 ### Metered hosted TURN
 
-1. Create a Metered TURN account and create a project/domain.
-2. In the Metered Developers page, copy the Metered domain and secret key.
+1. Create a Metered TURN account and create a TURN credential in the Metered dashboard.
+2. Open **Show ICE Servers Array** for that credential and copy its `apiKey`, not an ICE username or password.
 3. Add these Vercel server environment variables:
 
 ```text
 METERED_TURN_DOMAIN=your-app.metered.live
-METERED_TURN_SECRET_KEY=your-server-only-secret
-METERED_TURN_CREDENTIAL_TTL_SECONDS=7200
+METERED_TURN_API_KEY=the-credential-api-key
+WATCH_TOGETHER_ICE_TRANSPORT_POLICY=relay
 ```
 
-The `/api/watch-together/ice-servers` route creates an expiring credential on the server, fetches its ICE list, and sends only that short-lived credential to an authenticated room member.
+`WATCH_TOGETHER_ICE_TRANSPORT_POLICY=relay` makes browsers use the TURN relay instead of an unreliable direct route. It is especially useful for school, office, and mobile networks. The server only returns this policy when it has received a valid relay list.
+
+For short-lived Metered credentials instead, create a TURN project and use:
+
+```text
+METERED_TURN_DOMAIN=your-app.metered.live
+METERED_TURN_SECRET_KEY=the-secret-from-Developers
+METERED_TURN_PROJECT_ID=the-turn-project-id
+METERED_TURN_CREDENTIAL_TTL_SECONDS=7200
+WATCH_TOGETHER_ICE_TRANSPORT_POLICY=relay
+```
+
+The `/api/watch-together/ice-servers` route fetches the credential's ICE list and sends it only to an authenticated room member. It never exposes the Metered secret key.
 
 ### Your own coturn relay
 

@@ -260,6 +260,62 @@ try {
     else process.env.WATCH_TOGETHER_TURN_SHARED_SECRET = originalTurnSecret;
   }
 
+  const meteredEnvNames = [
+    "WATCH_TOGETHER_TURN_URLS",
+    "WATCH_TOGETHER_TURN_SHARED_SECRET",
+    "WATCH_TOGETHER_ICE_SERVERS",
+    "WATCH_TOGETHER_ICE_TRANSPORT_POLICY",
+    "METERED_TURN_DOMAIN",
+    "METERED_TURN_API_KEY",
+    "METERED_TURN_CREDENTIAL_API_KEY",
+    "METERED_TURN_SECRET_KEY",
+    "METERED_TURN_PROJECT_ID",
+    "METERED_TURN_CREDENTIAL_LABEL",
+  ];
+  const originalMeteredEnv = Object.fromEntries(meteredEnvNames.map((name) => [name, process.env[name]]));
+  const originalMeteredFetch = global.fetch;
+  try {
+    meteredEnvNames.forEach((name) => { delete process.env[name]; });
+    process.env.METERED_TURN_DOMAIN = "test-app.metered.live";
+    process.env.METERED_TURN_API_KEY = "test-metered-api-key";
+    let meteredRequests = 0;
+    global.fetch = async (input) => {
+      meteredRequests += 1;
+      const url = new URL(String(input));
+      assert.equal(url.hostname, "test-app.metered.live");
+      assert.equal(url.pathname, "/api/v1/turn/credentials");
+      assert.equal(url.searchParams.get("apiKey"), "test-metered-api-key");
+      return new Response(JSON.stringify([
+        { urls: "stun:stun.relay.metered.ca:80" },
+        {
+          urls: [
+            "turn:global.relay.metered.ca:80?transport=tcp",
+            "turns:global.relay.metered.ca:443?transport=tcp",
+          ],
+          username: "test-user",
+          credential: "test-password",
+        },
+      ]), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+
+    const meteredIceResponse = await invokeController(getWatchTogetherIceServers, { userId: userIds.guest });
+    assert.equal(meteredIceResponse.body.relayConfigured, true);
+    assert.equal(meteredIceResponse.body.relayStatus, "ready");
+    assert.equal(meteredIceResponse.body.iceTransportPolicy, "all");
+    assert.ok(meteredIceResponse.body.iceServers.some((server) => String(server.urls).includes("turns:")));
+
+    process.env.WATCH_TOGETHER_ICE_TRANSPORT_POLICY = "relay";
+    const relayedIceResponse = await invokeController(getWatchTogetherIceServers, { userId: userIds.guest });
+    assert.equal(relayedIceResponse.body.iceTransportPolicy, "relay");
+    assert.equal(meteredRequests, 1);
+  } finally {
+    global.fetch = originalMeteredFetch;
+    meteredEnvNames.forEach((name) => {
+      if (originalMeteredEnv[name] === undefined) delete process.env[name];
+      else process.env[name] = originalMeteredEnv[name];
+    });
+  }
+
   const realtimeState = new MemoryRoomRealtimeState({ staleConnectionMs: 1_000 });
   await realtimeState.upsertParticipant("STATE", {
     userId: userIds.host,
