@@ -11,6 +11,7 @@ import {
   normalizeRoomCode,
 } from "../utils/roomUtils.js";
 import { isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
+import { getCompletedR2Media } from "../services/r2Storage.js";
 
 const getUserId = (req) => req.auth?.().userId;
 
@@ -40,10 +41,16 @@ const sendError = (res, error) => res.status(error.statusCode || 500).json({
   message: error.statusCode ? error.message : "Unable to complete that room action.",
 });
 
+const resolveRoomMedia = async (media, userId) => (
+  String(media?.source || "").toLowerCase() === "r2"
+    ? getCompletedR2Media({ ownerId: userId, uploadId: media?.r2UploadId, title: media?.title })
+    : media
+);
+
 export const createWatchRoom = async (req, res) => {
   try {
     const userId = getUserId(req);
-    const media = normalizeMedia(req.body.media);
+    const media = normalizeMedia(await resolveRoomMedia(req.body.media, userId));
     const profile = await getDisplayProfile(userId, req.body);
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -124,7 +131,7 @@ export const updateRoomMedia = async (req, res) => {
       throw error;
     }
 
-    room.media = normalizeMedia(req.body.media);
+    room.media = normalizeMedia(await resolveRoomMedia(req.body.media, userId));
     room.playback = { isPlaying: false, currentTime: 0, updatedAt: new Date() };
     await room.save();
     return res.json({ success: true, room: presentWatchRoom(room, userId) });

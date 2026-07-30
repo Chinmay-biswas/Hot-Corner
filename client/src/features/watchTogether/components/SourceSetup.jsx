@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
+  Cloud,
   CloudUpload,
   HardDrive,
   Link,
   LoaderCircle,
   PlaySquare,
   Upload,
+  X,
   Youtube,
 } from "lucide-react";
 import {
@@ -17,22 +19,51 @@ import {
   shareGoogleDriveFileWithRoom,
   uploadGoogleDriveVideo,
 } from "../lib/googleDrive";
+import { getDirectUploadStatus, uploadDirectVideo, validateDirectVideoFile } from "../lib/directUpload";
 import { extractYouTubeId, formatBytes, MAX_GOOGLE_DRIVE_FILE_SIZE, toDriveMedia } from "../lib/media";
 
-const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, actionLabel = "Create room", initialMedia }) => {
-  const [source, setSource] = useState(initialMedia?.source === "drive" ? "drive" : "youtube");
-  const [youtubeUrl, setYoutubeUrl] = useState(initialMedia?.url || "");
+const SourceSetup = ({
+  onSubmitMedia,
+  prepareDriveMedia,
+  submitting = false,
+  actionLabel = "Create room",
+  initialMedia,
+  axios,
+  getToken,
+}) => {
+  const initialSource = ["drive", "r2"].includes(initialMedia?.source) ? initialMedia.source : "youtube";
+  const [source, setSource] = useState(initialSource);
+  const [youtubeUrl, setYoutubeUrl] = useState(initialMedia?.source === "youtube" ? initialMedia.url || "" : "");
   const [title, setTitle] = useState(initialMedia?.title || "");
   const [driveToken, setDriveToken] = useState("");
   const [driveFiles, setDriveFiles] = useState([]);
   const [selectedDriveFile, setSelectedDriveFile] = useState(null);
+  const [directMedia, setDirectMedia] = useState(initialMedia?.source === "r2" ? initialMedia : null);
   const [shareWithRoom, setShareWithRoom] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDirectUploading, setIsDirectUploading] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [directUploadProgress, setDirectUploadProgress] = useState(0);
+  const [directUploadStatus, setDirectUploadStatus] = useState(null);
   const [prepareStatus, setPrepareStatus] = useState("");
   const [error, setError] = useState("");
+  const directUploadAbortRef = useRef(null);
+
+  useEffect(() => {
+    if (!axios || !getToken) return undefined;
+    let active = true;
+    getDirectUploadStatus({ axios, getToken })
+      .then((status) => { if (active) setDirectUploadStatus(status); })
+      .catch((statusError) => {
+        if (active) setDirectUploadStatus({ configured: false, message: statusError.message || "Could not check direct upload storage." });
+      });
+    return () => {
+      active = false;
+      directUploadAbortRef.current?.abort();
+    };
+  }, [axios, getToken]);
 
   const loadDriveFiles = async (token) => {
     const files = await listGoogleDriveVideos(token);
@@ -53,7 +84,7 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
     }
   };
 
-  const uploadFile = async (event) => {
+  const uploadDriveFile = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
@@ -86,6 +117,43 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
     }
   };
 
+  const uploadDirectFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    const validationError = validateDirectVideoFile(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setError("");
+    setIsDirectUploading(true);
+    setDirectUploadProgress(0);
+    const controller = new AbortController();
+    directUploadAbortRef.current = controller;
+    try {
+      const uploadedMedia = await uploadDirectVideo({
+        axios,
+        getToken,
+        file,
+        title,
+        signal: controller.signal,
+        onProgress: setDirectUploadProgress,
+      });
+      setDirectMedia(uploadedMedia);
+      setTitle((current) => current || file.name);
+    } catch (uploadError) {
+      if (uploadError.name !== "AbortError") setError(uploadError.message || "Could not upload the video.");
+    } finally {
+      if (directUploadAbortRef.current === controller) directUploadAbortRef.current = null;
+      setIsDirectUploading(false);
+    }
+  };
+
+  const cancelDirectUpload = () => directUploadAbortRef.current?.abort();
+
   const submit = async (event) => {
     event.preventDefault();
     setError("");
@@ -101,6 +169,20 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
         await onSubmitMedia({ source: "youtube", youtubeId, title });
       } catch (submitError) {
         setError(submitError.message || "Could not save this video.");
+      }
+      return;
+    }
+
+    if (source === "r2") {
+      if (!directMedia?.r2UploadId) {
+        setError("Upload a video before creating the room.");
+        return;
+      }
+
+      try {
+        await onSubmitMedia({ source: "r2", r2UploadId: directMedia.r2UploadId, title: title || directMedia.title });
+      } catch (submitError) {
+        setError(submitError.message || "Could not save this uploaded video.");
       }
       return;
     }
@@ -133,12 +215,17 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
     }
   };
 
+  const setSelectedSource = (nextSource) => {
+    setSource(nextSource);
+    setError("");
+  };
+
   return (
     <form onSubmit={submit} className="space-y-5">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid sm:grid-cols-3 gap-3">
         <button
           type="button"
-          onClick={() => { setSource("youtube"); setError(""); }}
+          onClick={() => setSelectedSource("youtube")}
           className={`min-h-26 border p-4 text-left transition cursor-pointer rounded-lg ${source === "youtube" ? "border-primary bg-primary/10" : "border-white/10 bg-white/[0.03] hover:border-white/30"}`}
         >
           <Youtube className="w-5 h-5 text-primary" />
@@ -147,12 +234,21 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
         </button>
         <button
           type="button"
-          onClick={() => { setSource("drive"); setError(""); }}
+          onClick={() => setSelectedSource("drive")}
           className={`min-h-26 border p-4 text-left transition cursor-pointer rounded-lg ${source === "drive" ? "border-primary bg-primary/10" : "border-white/10 bg-white/[0.03] hover:border-white/30"}`}
         >
           <HardDrive className="w-5 h-5 text-primary" />
           <span className="block mt-3 text-sm font-medium">Google Drive</span>
           <span className="block text-xs text-gray-400 mt-1">Choose or upload a video</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedSource("r2")}
+          className={`min-h-26 border p-4 text-left transition cursor-pointer rounded-lg ${source === "r2" ? "border-primary bg-primary/10" : "border-white/10 bg-white/[0.03] hover:border-white/30"}`}
+        >
+          <Cloud className="w-5 h-5 text-primary" />
+          <span className="block mt-3 text-sm font-medium">Direct upload</span>
+          <span className="block text-xs text-gray-400 mt-1">Upload a shared video</span>
         </button>
       </div>
 
@@ -170,7 +266,7 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
             />
           </span>
         </label>
-      ) : (
+      ) : source === "drive" ? (
         <div className="space-y-4">
           {!isGoogleDriveConfigured() ? (
             <div className="border border-amber-300/30 bg-amber-300/10 px-4 py-3 rounded-lg text-sm text-amber-100">
@@ -193,7 +289,7 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
                 <label className="inline-flex items-center gap-2 h-9 px-3 border border-white/15 hover:border-primary transition rounded-lg text-xs cursor-pointer">
                   {isUploading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                   {isUploading ? `${uploadProgress}%` : "Upload"}
-                  <input type="file" accept="video/*" className="sr-only" onChange={uploadFile} disabled={isUploading || isPreparing} />
+                  <input type="file" accept="video/*" className="sr-only" onChange={uploadDriveFile} disabled={isUploading || isPreparing} />
                 </label>
               </div>
               <div className="max-h-52 overflow-y-auto pr-1 space-y-2">
@@ -223,10 +319,59 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
                   onChange={(event) => setShareWithRoom(event.target.checked)}
                   className="mt-0.5 accent-primary"
                 />
-                <span className="text-sm text-gray-300">
-                  Let people with this room link view the selected Drive file.
-                </span>
+                <span className="text-sm text-gray-300">Let people with this room link view the selected Drive file.</span>
               </label>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {!directUploadStatus?.configured ? (
+            <div className="border border-amber-300/30 bg-amber-300/10 px-4 py-3 rounded-lg text-sm text-amber-100">
+              {directUploadStatus?.message || "Checking direct upload storage."}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-gray-300">MP4, WebM, or Ogg up to {formatBytes(directUploadStatus.maxFileSizeBytes)}</p>
+                <label className="inline-flex items-center gap-2 h-9 px-3 border border-white/15 hover:border-primary transition rounded-lg text-xs cursor-pointer">
+                  {isDirectUploading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                  {directMedia ? "Replace" : "Choose video"}
+                  <input
+                    type="file"
+                    accept=".mp4,.m4v,.webm,.ogv,.ogg,video/mp4,video/webm,video/ogg"
+                    className="sr-only"
+                    onChange={uploadDirectFile}
+                    disabled={isDirectUploading || submitting}
+                  />
+                </label>
+              </div>
+              {isDirectUploading && (
+                <div className="border border-white/10 bg-white/[0.02] p-3 rounded-lg">
+                  <div className="flex items-center gap-3 text-sm text-gray-300">
+                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden bg-white/10 rounded-full">
+                      <div className="h-full bg-primary transition-[width] duration-200" style={{ width: `${directUploadProgress}%` }} />
+                    </div>
+                    <span className="w-9 text-right tabular-nums text-xs">{directUploadProgress}%</span>
+                    <button
+                      type="button"
+                      onClick={cancelDirectUpload}
+                      title="Cancel upload"
+                      aria-label="Cancel upload"
+                      className="w-8 h-8 shrink-0 flex items-center justify-center border border-white/15 hover:border-primary transition rounded-lg cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              {directMedia && !isDirectUploading && (
+                <div className="flex items-center gap-3 border border-primary bg-primary/10 px-3 py-2.5 rounded-lg">
+                  <PlaySquare className="w-4 h-4 shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1 truncate text-sm">{directMedia.title || "Uploaded video"}</span>
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-primary" />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -237,7 +382,7 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
         <input
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder={source === "youtube" ? "Movie night" : "Use the Drive file name"}
+          placeholder={source === "youtube" ? "Movie night" : source === "drive" ? "Use the Drive file name" : "Use the uploaded file name"}
           maxLength={160}
           className="mt-2 w-full h-11 border border-white/10 bg-black/30 px-3 rounded-lg outline-none text-sm focus:border-primary"
         />
@@ -248,7 +393,7 @@ const SourceSetup = ({ onSubmitMedia, prepareDriveMedia, submitting = false, act
 
       <button
         type="submit"
-        disabled={submitting || isUploading || isPreparing}
+        disabled={submitting || isUploading || isDirectUploading || isPreparing}
         className="w-full min-h-12 flex items-center justify-center gap-2 bg-primary hover:bg-primary-dull disabled:opacity-60 transition rounded-lg font-medium cursor-pointer disabled:cursor-not-allowed"
       >
         {submitting || isPreparing ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}

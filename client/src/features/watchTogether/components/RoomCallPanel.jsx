@@ -1,14 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Phone, PhoneOff, Video, VideoOff, VideoIcon } from "lucide-react";
 
-const StreamVideo = ({ stream, muted = false, label, videoEnabled = true }) => {
+const StreamVideo = ({
+  stream,
+  label,
+  videoEnabled = true,
+  socketId,
+  onPlaybackStart,
+  onPlaybackStalled,
+}) => {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (!videoRef.current) return;
-    videoRef.current.srcObject = stream || null;
-    videoRef.current.play().catch(() => undefined);
-  }, [stream]);
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    const playVideo = () => video.play().catch(() => undefined);
+    video.muted = true;
+    video.srcObject = stream || null;
+    if (stream) playVideo();
+
+    const videoTracks = stream?.getVideoTracks?.() || [];
+    videoTracks.forEach((track) => track.addEventListener("unmute", playVideo));
+    return () => {
+      videoTracks.forEach((track) => track.removeEventListener("unmute", playVideo));
+      video.pause();
+      video.srcObject = null;
+    };
+  }, [stream, videoEnabled]);
 
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg bg-black border border-white/10">
@@ -17,8 +36,12 @@ const StreamVideo = ({ stream, muted = false, label, videoEnabled = true }) => {
           ref={videoRef}
           autoPlay
           playsInline
-          muted={muted}
+          muted
           onLoadedMetadata={(event) => event.currentTarget.play().catch(() => undefined)}
+          onCanPlay={(event) => event.currentTarget.play().catch(() => undefined)}
+          onPlaying={() => onPlaybackStart?.(socketId)}
+          onWaiting={() => onPlaybackStalled?.(socketId)}
+          onStalled={() => onPlaybackStalled?.(socketId)}
           className="w-full h-full object-cover"
         />
       ) : (
@@ -27,6 +50,30 @@ const StreamVideo = ({ stream, muted = false, label, videoEnabled = true }) => {
       <span className="absolute left-2 bottom-2 max-w-[calc(100%-1rem)] truncate bg-black/65 px-2 py-1 text-xs rounded">{label}</span>
     </div>
   );
+};
+
+const RemoteAudio = ({ stream }) => {
+  const audioRef = useRef(null);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return undefined;
+
+    const playAudio = () => audio.play().catch(() => undefined);
+    audio.muted = false;
+    audio.srcObject = stream || null;
+    if (stream) playAudio();
+    window.addEventListener("pointerdown", playAudio, { passive: true });
+    window.addEventListener("keydown", playAudio);
+    return () => {
+      window.removeEventListener("pointerdown", playAudio);
+      window.removeEventListener("keydown", playAudio);
+      audio.pause();
+      audio.srcObject = null;
+    };
+  }, [stream]);
+
+  return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
 };
 
 const RoomCallPanel = ({ callActive, call }) => {
@@ -52,14 +99,17 @@ const RoomCallPanel = ({ callActive, call }) => {
       <div className="p-3 space-y-3">
         {call.inCall ? (
           <>
+            {call.remoteStreams.map((remote) => <RemoteAudio key={`audio-${remote.socketId}`} stream={remote.stream} />)}
             <div className="grid grid-cols-2 gap-2">
-              <StreamVideo stream={call.localStream} muted label="You" videoEnabled={call.videoEnabled} />
+              <StreamVideo stream={call.localStream} label="You" videoEnabled={call.videoEnabled} />
               {call.remoteStreams.map((remote) => (
                 <StreamVideo
                   key={remote.socketId}
                   stream={remote.stream}
                   label={remote.participant?.name || "Guest"}
-                  muted={call.floatingCallVisible}
+                  socketId={remote.socketId}
+                  onPlaybackStart={call.markRemoteVideoPlaying}
+                  onPlaybackStalled={call.reportRemoteVideoStalled}
                 />
               ))}
             </div>
@@ -69,7 +119,7 @@ const RoomCallPanel = ({ callActive, call }) => {
                 onClick={call.toggleAudio}
                 title={call.audioEnabled ? "Mute microphone" : "Turn microphone on"}
                 aria-label={call.audioEnabled ? "Mute microphone" : "Turn microphone on"}
-                className={`w-10 h-10 flex items-center justify-center border transition rounded-lg cursor-pointer ${call.audioEnabled ? "border-white/15 hover:border-white/40" : "border-primary bg-primary/15 text-primary"}`}
+                className="w-10 h-10 flex items-center justify-center border border-white/15 hover:border-primary hover:bg-primary/10 transition rounded-lg cursor-pointer"
               >
                 {call.audioEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
               </button>
@@ -78,7 +128,7 @@ const RoomCallPanel = ({ callActive, call }) => {
                 onClick={call.toggleVideo}
                 title={call.videoEnabled ? "Turn camera off" : "Turn camera on"}
                 aria-label={call.videoEnabled ? "Turn camera off" : "Turn camera on"}
-                className={`w-10 h-10 flex items-center justify-center border transition rounded-lg cursor-pointer ${call.videoEnabled ? "border-white/15 hover:border-white/40" : "border-primary bg-primary/15 text-primary"}`}
+                className="w-10 h-10 flex items-center justify-center border border-white/15 hover:border-primary hover:bg-primary/10 transition rounded-lg cursor-pointer"
               >
                 {call.videoEnabled ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
               </button>

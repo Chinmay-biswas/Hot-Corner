@@ -170,7 +170,24 @@ export const normalizeMedia = (value = {}) => {
     };
   }
 
-  throw createValidationError("Choose either YouTube or Google Drive.");
+  if (source === "r2") {
+    const uploadId = String(value.r2UploadId || "").trim();
+    const url = String(value.url || "").trim();
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(uploadId) || !/^https:\/\//i.test(url)) {
+      throw createValidationError("The direct upload is invalid. Upload the video again.");
+    }
+
+    return {
+      source,
+      r2UploadId: uploadId,
+      title: cleanMediaTitle(value.title, "Shared upload"),
+      url: url.slice(0, 5000),
+      thumbnail: "",
+      mimeType: String(value.mimeType || "").startsWith("video/") ? value.mimeType.slice(0, 120) : "video/mp4",
+    };
+  }
+
+  throw createValidationError("Choose YouTube, Google Drive, or a direct upload.");
 };
 
 export const getRoomExpiryDate = () => {

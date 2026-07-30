@@ -11,6 +11,7 @@ import {
   normalizeRoomCode,
 } from "../utils/roomUtils.js";
 import { canControlRoom, isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
+import { getCompletedR2Media } from "../services/r2Storage.js";
 
 const participantLeaveTimers = new Map();
 const DEFAULT_PRESENCE_GRACE_MS = 12_000;
@@ -221,7 +222,14 @@ export const initializeWatchTogetherSocket = (
           return respond(acknowledgement, toSocketError("Only the room creator can change the video."));
         }
 
-        room.media = normalizeMedia(payload.media);
+        const mediaInput = String(payload.media?.source || "").toLowerCase() === "r2"
+          ? await getCompletedR2Media({
+            ownerId: socket.data.userId,
+            uploadId: payload.media?.r2UploadId,
+            title: payload.media?.title,
+          })
+          : payload.media;
+        room.media = normalizeMedia(mediaInput);
         room.playback = { isPlaying: false, currentTime: 0, updatedAt: new Date() };
         await room.save();
         const event = { room: presentWatchRoom(room, socket.data.userId), updatedBy: socket.data.profile };
