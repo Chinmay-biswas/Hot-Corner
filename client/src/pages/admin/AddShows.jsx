@@ -51,7 +51,16 @@ const AddShows = () => {
 
 
        const handleDateTimeAdd = () => {
-  if (!dateTimeInput) return;
+  if (!dateTimeInput) {
+    toast.error('Choose a future date and time first')
+    return
+  }
+
+  const selectedDateTime = new Date(dateTimeInput)
+  if (Number.isNaN(selectedDateTime.getTime()) || selectedDateTime.getTime() <= Date.now()) {
+    toast.error('Show times must be in the future')
+    return
+  }
 
   const [date, time] = dateTimeInput.split("T");
   if (!date || !time) return;
@@ -63,8 +72,7 @@ const AddShows = () => {
     }
     return prev;
   });
-
-  //setDateTimeInput(""); // Optional: clear the input after adding
+  setDateTimeInput("")
 };
 
       const handleRemoveTime =(date,time)=>{
@@ -81,9 +89,10 @@ const AddShows = () => {
       };
 
 
-      const handleSubmit = async()=>{
-if(!selectedMovies || Object.keys(dateTimeSelection).length===0||!showPrice){
-  return toast.error('missing required fields')
+const handleSubmit = async()=>{
+const price = Number(showPrice)
+if(!selectedMovies || Object.keys(dateTimeSelection).length===0 || !Number.isFinite(price) || price <= 0){
+  return toast.error('Choose a movie, add a future time, and enter a price greater than zero')
 }
 
 try {
@@ -94,7 +103,7 @@ try {
   const payload={
     movieId: selectedMovies,
     showsInput,
-    showPrice:Number(showPrice)
+    showPrice:price
   }
    
 const {data} = await axios.post('/api/show/add',payload,{headers:{Authorization:`Bearer ${await getToken()}`}})
@@ -168,7 +177,7 @@ if(data.success){
       <div className='overflow-x-auto pb-4'>
         <div className='group flex flex-wrap gap-4 mt-4 w-max'>
           {nowPlayingMovies.map((movie)=>(
-            <div onClick={()=>setSelectedMovies(movie.id)} key={movie.id} className={`relative max-w-40 cursor-pointer group-hover:not-hover:opacity-60 hover:-translate-y-1 transition duration-300`} >
+            <button type='button' onClick={()=>setSelectedMovies(movie.id)} key={movie.id} className={`relative max-w-40 text-left cursor-pointer group-hover:not-hover:opacity-60 hover:-translate-y-1 transition duration-300 ${selectedMovies === movie.id ? 'ring-1 ring-primary rounded-lg' : ''}`}>
                 <div className='relative rounded-lg overflow-hidden'>
                   <img src={movie.poster_path ? image_base_url + movie.poster_path : '/backgroundImage.png'} alt="" className='w-full object-cover brightness-90'/>
                   <div className='text-sm flex items-center justify-between p-2 bg-black/60 w-full absolute bottom-0 left-0'> 
@@ -189,7 +198,7 @@ if(data.success){
                 </div>)}
                 <p className='font-lg truncate'>{movie.title}</p>
                 <p className='text-gray-400 text-sm'>{movie.release_date}</p>
-            </div> 
+            </button>
 
                     
 
@@ -209,7 +218,7 @@ if(data.success){
   <label className="block text-sm font-medium mb-2">Show Price</label>
   <div className="inline-flex items-center gap-2 border border-gray-600 px-3 py-2 rounded-md">
     <p className="text-gray-400 text-sm">{currency}</p>
-    <input min={0} type="number" value={showPrice} onChange={(e) => setShowPrice(e.target.value)} placeholder="Enter show price" className="outline-none"/>
+    <input min="0.01" step="0.01" type="number" value={showPrice} onChange={(e) => setShowPrice(e.target.value)} placeholder="Enter show price" className="outline-none"/>
   </div>
 </div>
 
@@ -244,8 +253,9 @@ if(data.success){
                 className="border border-primary px-2 py-1 flex items-center rounded"
               >
                 <span>{time}</span>
-                <DeleteIcon onClick={() => handleRemoveTime(date, time)} width={15} className="ml-2 text-red-500 hover:text-red-700 cursor-pointer"
-                />
+                <button type='button' onClick={() => handleRemoveTime(date, time)} title={`Remove ${time}`} aria-label={`Remove ${time}`} className='ml-2 text-red-400 hover:text-red-200 cursor-pointer'>
+                  <DeleteIcon width={15}/>
+                </button>
                </div>
              ))}
           </div>
@@ -256,8 +266,8 @@ if(data.success){
 )}
 
 
-<button onClick={handleSubmit} disabled={addingShow} className='bg-primary text-white px-8 py-2 mt-6 rounded hover:bg-primary/70 transition-all cursor-pointer'>
-  Add Show
+<button onClick={handleSubmit} disabled={addingShow} className='bg-primary text-white px-8 py-2 mt-6 rounded hover:bg-primary/70 disabled:opacity-60 transition-all cursor-pointer'>
+  {addingShow ? 'Adding Show...' : 'Add Show'}
 </button>
 
 

@@ -1,125 +1,135 @@
-/// check if i am amin or not break the third wall 
-
 import Booking from "../models/Booking.js";
 import Show from "../models/Show.js";
-import Users from "../models/User.js";
+import User from "../models/User.js";
 
+const sendAdminError = (res, label, error) => {
+  console.error(label, error.message);
+  return res.status(500).json({ success: false, message: "Could not load admin data. Please try again." });
+};
 
-export const isAdmin = async (req,res)=>{
-    res.json({success:true , isAdmin:true})
-}
+const getPaidBookingStatsByShow = async (showIds) => {
+  if (!showIds.length) return new Map();
 
-// api to get into dasboard
-export const getDashboardData = async(req,res )=>{
-    try {
-        const bookings = await Booking.find({isPaid: true});
-        const activeShows = await Show.find({showDateTime: {$gte: new Date()}}).populate('movie');
-        const totalUsers = await Users.countDocuments();
+  const stats = await Booking.aggregate([
+    { $match: { isPaid: true, show: { $in: showIds } } },
+    {
+      $group: {
+        _id: "$show",
+        paidBookingCount: { $sum: 1 },
+        paidSeatCount: { $sum: { $size: { $ifNull: ["$bookedSeats", []] } } },
+        totalRevenue: { $sum: "$amount" },
+      },
+    },
+  ]);
 
+  return new Map(stats.map((stat) => [String(stat._id), {
+    paidBookingCount: stat.paidBookingCount,
+    paidSeatCount: stat.paidSeatCount,
+    totalRevenue: stat.totalRevenue,
+  }]));
+};
 
-        const dashboardData ={
-            totalBookings:bookings.length,
-            totalRevenue:bookings.reduce((acc, booking) => acc + booking.amount, 0),
-            activeShows,
-            totalUsers,
-            totalUser: totalUsers
+export const isAdmin = async (_req, res) => res.json({ success: true, isAdmin: true });
 
+export const getDashboardData = async (_req, res) => {
+  try {
+    const [bookingTotals, activeShows, totalUsers] = await Promise.all([
+      Booking.aggregate([
+        { $match: { isPaid: true } },
+        { $group: { _id: null, totalBookings: { $sum: 1 }, totalRevenue: { $sum: "$amount" } } },
+      ]),
+      Show.find({ showDateTime: { $gte: new Date() } })
+        .populate("movie")
+        .sort({ showDateTime: 1 }),
+      User.countDocuments(),
+    ]);
 
-        }
-        res.json({success:true,dashboardData})
+    const totals = bookingTotals[0] || {};
+    return res.json({
+      success: true,
+      dashboardData: {
+        totalBookings: Number(totals.totalBookings || 0),
+        totalRevenue: Number(totals.totalRevenue || 0),
+        activeShows,
+        totalUsers,
+      },
+    });
+  } catch (error) {
+    return sendAdminError(res, "Could not load admin dashboard:", error);
+  }
+};
 
+export const getAllShows = async (_req, res) => {
+  try {
+    const shows = await Show.find({ showDateTime: { $gte: new Date() } })
+      .populate("movie")
+      .sort({ showDateTime: 1 });
+    const showIds = shows.map((show) => show._id.toString());
+    const statsByShow = await getPaidBookingStatsByShow(showIds);
 
+    const enrichedShows = shows.map((show) => {
+      const stats = statsByShow.get(show._id.toString()) || {};
+      return {
+        ...show.toObject(),
+        paidBookingCount: Number(stats.paidBookingCount || 0),
+        paidSeatCount: Number(stats.paidSeatCount || 0),
+        totalRevenue: Number(stats.totalRevenue || 0),
+      };
+    });
 
-    } 
-    
-    
-    catch (error) {
-        console.log(error.message);
-        res.json({success:false,message:error.message})
-        
-    }
-}
+    return res.json({ success: true, shows: enrichedShows });
+  } catch (error) {
+    return sendAdminError(res, "Could not load admin shows:", error);
+  }
+};
 
+export const getAllBookings = async (_req, res) => {
+  try {
+    const bookings = await Booking.find({})
+      .populate("user")
+      .populate({ path: "show", populate: { path: "movie" } })
+      .sort({ createdAt: -1 });
 
-//api to get all shows
-export const getAllShows= async (req,res)=>{
+    return res.json({ success: true, bookings });
+  } catch (error) {
+    return sendAdminError(res, "Could not load admin bookings:", error);
+  }
+};
 
+export const getAllUsers = async (_req, res) => {
+  try {
+    const [users, bookingTotals] = await Promise.all([
+      User.find({}).sort({ createdAt: -1 }),
+      Booking.aggregate([
+        { $match: { isPaid: true } },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: "$user",
+            totalPaid: { $sum: "$amount" },
+            customerEmail: { $first: "$customerEmail" },
+            customerPhone: { $first: "$customerPhone" },
+          },
+        },
+      ]),
+    ]);
 
+    const totalsByUser = new Map(bookingTotals.map((total) => [String(total._id), total]));
+    const usersData = users.map((user) => {
+      const totals = totalsByUser.get(user._id.toString()) || {};
+      return {
+        _id: user._id,
+        name: user.name,
+        email: user.email || totals.customerEmail || "",
+        phone: user.phone || totals.customerPhone || "",
+        totalPaid: Number(totals.totalPaid || 0),
+        totalTimeSpent: Number(user.totalTimeSpent || 0),
+        createdAt: user.createdAt || null,
+      };
+    });
 
-
-    try {
-
-        const shows =await Show.find({
-            showDateTime:{$gte: new Date()}
-        }).populate('movie').sort({showDateTime:1})
-         res.json({success:true,shows})
-
-    } catch (error) {
-
-         console.log(error.message);
-        res.json({success:false,message:error.message})
-
-        
-    }}
-
-
-    //Api to get all bookings
-    export const getAllBookings = async (req,res)=>{
-
-        try {
-
-            const bookings = await Booking.find({}).populate('user').populate({
-                path:"show",
-                populate:{path:"movie"}
-            }).sort({ createdAt: -1 });  // Mongo default timestamp is `createdAt`
-
-
-
-            res.json({success:true, bookings});
-            
-        } 
-        
-        catch (error) {
-
-            console.log(error.message);
-            res.json({success:false,message:error.message});
-            
-        }
-
-    } 
-
-export const getAllUsers = async (req,res)=>{
-    try {
-        const users = await Users.find({}).sort({createdAt:-1});
-        const paidBookings = await Booking.find({isPaid:true}).sort({createdAt:-1});
-
-        const paymentMap = new Map();
-        const phoneMap = new Map();
-        const emailMap = new Map();
-        paidBookings.forEach((booking)=>{
-            const userId = booking.user?.toString();
-            paymentMap.set(userId,(paymentMap.get(userId)||0)+booking.amount);
-            if(userId && booking.customerPhone && !phoneMap.has(userId)){
-                phoneMap.set(userId,booking.customerPhone);
-            }
-            if(userId && booking.customerEmail && !emailMap.has(userId)){
-                emailMap.set(userId,booking.customerEmail);
-            }
-        })
-
-        const usersData = users.map((user)=>({
-            _id:user._id,
-            name:user.name,
-            email:user.email || emailMap.get(user._id.toString()) || "",
-            phone:user.phone || phoneMap.get(user._id.toString()) || "",
-            totalPaid:paymentMap.get(user._id.toString()) || 0,
-            totalTimeSpent:user.totalTimeSpent || 0,
-            createdAt:user.createdAt
-        }))
-
-        res.json({success:true,users:usersData})
-    } catch (error) {
-        console.log(error.message);
-        res.json({success:false,message:error.message})
-    }
-}
+    return res.json({ success: true, users: usersData });
+  } catch (error) {
+    return sendAdminError(res, "Could not load admin users:", error);
+  }
+};

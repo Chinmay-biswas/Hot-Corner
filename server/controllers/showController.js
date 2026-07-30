@@ -17,6 +17,11 @@ const TMDB_MAX_RETRIES = 2;
 const TMDB_RETRY_DELAY_MS = 700;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const createValidationError = (message) => {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+};
 
 const isRetryableTmdbError = (error) => {
   const status = error.response?.status;
@@ -254,141 +259,180 @@ export const toggleReleaseUpvote = async (req, res) => {
 
 
 
-// api to add a new show to the data base
-export const addShow=async(req,res)=>{
-    try{
-            const {movieId,showsInput,showPrice}=req.body
-            let movie= await Movie.findById(movieId)
-            if(!movie){
-                //fetch movie details and cast details
+const normalizeShowSchedule = (showsInput) => {
+  if (!Array.isArray(showsInput) || !showsInput.length) {
+    throw createValidationError("Choose at least one future show time.");
+  }
 
-                const movieDetailsResponse = await fetchTmdb(`https://api.themoviedb.org/3/movie/${movieId}`);
-                const movieCreditsResponse = await fetchTmdb(`https://api.themoviedb.org/3/movie/${movieId}/credits?language=en-US`)
-                  .catch((error) => {
-                    console.error(`Could not fetch cast for movie ${movieId}:`, error.message);
-                    return { data: { cast: [] } };
-                  });
-    
-    const movieApiData = movieDetailsResponse.data;
-    const movieCreditsData = movieCreditsResponse.data;
-    const filteredCasts = movieCreditsData.cast.map(c => ({
-  id: c.id,
-  name: c.name,
-  character: c.character,
-  profile_path: c.profile_path,
-  gender: c.gender,
-  order: c.order
-}));
-console.log("Filtered cast:", filteredCasts.length, filteredCasts[0]);
+  const slots = new Map();
+  const now = Date.now();
+  for (const entry of showsInput) {
+    const date = String(entry?.date || "").trim();
+    const times = Array.isArray(entry?.time) ? entry.time : [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !times.length) {
+      throw createValidationError("Each show needs a valid date and time.");
+    }
 
+    for (const rawTime of times) {
+      const time = String(rawTime || "").trim();
+      if (!/^\d{2}:\d{2}$/.test(time)) {
+        throw createValidationError("Each show time must use the selected date and time format.");
+      }
+      const showDateTime = new Date(`${date}T${time}:00`);
+      if (Number.isNaN(showDateTime.getTime()) || showDateTime.getTime() <= now) {
+        throw createValidationError("Show times must be in the future.");
+      }
+      slots.set(showDateTime.getTime(), { date, time, showDateTime });
+    }
+  }
 
+  const schedule = [...slots.values()].sort((left, right) => left.showDateTime - right.showDateTime);
+  if (schedule.length > 50) {
+    throw createValidationError("Add up to 50 show times at once.");
+  }
+  return schedule;
+};
 
+const escapeHtml = (value) => String(value || "").replace(/[&<>'"]/g, (character) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "'": "&#39;",
+  '"': "&quot;",
+})[character]);
 
-    const movieDetails={
-        _id:movieId,
-        title:movieApiData.title ,
-        overview: movieApiData.overview,
-        poster_path: movieApiData.poster_path,
-        backdrop_path: movieApiData.backdrop_path,
-        original_language: movieApiData.original_language,
-        release_date:movieApiData.release_date,
-        genres: movieApiData.genres,
-        casts: filteredCasts,
-        vote_average:movieApiData.vote_average ,
-        runtime: movieApiData.runtime,
+// Add a new theatre show and avoid duplicate future sessions for the same movie.
+export const addShow = async (req, res) => {
+  try {
+    const movieId = String(req.body.movieId || "").trim();
+    const showPrice = Number(req.body.showPrice);
+    if (!/^\d+$/.test(movieId)) {
+      throw createValidationError("Choose a valid movie before adding a show.");
+    }
+    if (!Number.isFinite(showPrice) || showPrice <= 0 || showPrice > 1_000_000) {
+      throw createValidationError("Enter a valid show price greater than zero.");
+    }
+
+    const schedule = normalizeShowSchedule(req.body.showsInput);
+    const showTimes = schedule.map((slot) => slot.showDateTime);
+    const existingShows = await Show.find({ movie: movieId, showDateTime: { $in: showTimes } })
+      .select("showDateTime")
+      .lean();
+    if (existingShows.length) {
+      return res.status(409).json({
+        success: false,
+        message: "One or more selected show times already exist for this movie.",
+      });
+    }
+
+    let movie = await Movie.findById(movieId);
+    if (!movie) {
+      const movieDetailsResponse = await fetchTmdb(`https://api.themoviedb.org/3/movie/${movieId}`);
+      const movieCreditsResponse = await fetchTmdb(`https://api.themoviedb.org/3/movie/${movieId}/credits?language=en-US`)
+        .catch((error) => {
+          console.error(`Could not fetch cast for movie ${movieId}:`, error.message);
+          return { data: { cast: [] } };
+        });
+      const movieApiData = movieDetailsResponse.data;
+      const movieCreditsData = movieCreditsResponse.data;
+
+      movie = await Movie.create({
+        _id: movieId,
+        title: movieApiData.title || movieApiData.original_title || "Untitled Movie",
+        overview: movieApiData.overview || "No overview available.",
+        poster_path: movieApiData.poster_path || "",
+        backdrop_path: movieApiData.backdrop_path || movieApiData.poster_path || "",
+        original_language: movieApiData.original_language || "",
+        release_date: movieApiData.release_date || "",
+        genres: movieApiData.genres || [],
+        casts: (movieCreditsData.cast || []).slice(0, 20).map((cast) => ({
+          id: cast.id,
+          name: cast.name,
+          character: cast.character,
+          profile_path: cast.profile_path,
+          gender: cast.gender,
+          order: cast.order,
+        })),
+        vote_average: Number(movieApiData.vote_average || 0),
+        runtime: Number(movieApiData.runtime || 0),
         tagline: movieApiData.tagline || "",
-
-    } //add this in mongo db data base
-
-
-    movie = await Movie.create(movieDetails);
-    
+      });
     }
 
-    const showsToCreate =[];
-    showsInput.forEach(show=>{
-        const showDate = show.date;
-        show.time.forEach((time)=>{
-            const dateTimeString = `${showDate}T${time}`;
-            showsToCreate.push({
-                movie: movieId,
-                showDateTime : new Date(dateTimeString),
-                showPrice,
-                occupiedSeats:{}
-
-            })
-        })
-    });
-
-
-    if(showsToCreate.length>0){
-        await Show.insertMany(showsToCreate);
-    }
+    const roundedPrice = Number(showPrice.toFixed(2));
+    await Show.insertMany(schedule.map(({ showDateTime }) => ({
+      movie: movieId,
+      showDateTime,
+      showPrice: roundedPrice,
+      occupiedSeats: {},
+    })));
 
     const users = await User.find({ email: { $exists: true, $ne: "" } }).select("name email");
-    const uniqueEmails = [...new Map(users.map((user) => [user.email, user])).values()];
-    const showDates = showsInput
-      .map((show) => `${show.date} at ${show.time.join(", ")}`)
+    const uniqueEmails = [...new Map(users.map((user) => [user.email.toLowerCase(), user])).values()];
+    const scheduleText = schedule
+      .map(({ date, time }) => `${escapeHtml(date)} at ${escapeHtml(time)}`)
       .join("<br/>");
+    const safeTitle = escapeHtml(movie.title);
 
-    const emailResults = await Promise.allSettled(
-      uniqueEmails.map((user) =>
-        sendEmail({
-          to: user.email,
-          subject: `New movie added at Hot Corner: ${movie.title}`,
-          body: `
-            <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-              <h2 style="color: #F84565;">Hi ${user.name || "Movie Fan"},</h2>
-              <p>Hot Corner has added a new movie for booking.</p>
-              <p><strong>Movie:</strong> ${movie.title}</p>
-              <p><strong>Ticket Price:</strong> ${showPrice}</p>
-              <p><strong>Show Time:</strong><br/>${showDates}</p>
-              <p>Book your seat before it fills up.</p>
-              <p>Greetings from,<br/><strong>Hot Corner</strong></p>
-            </div>
-          `,
-        })
-      )
-    );
+    const emailResults = await Promise.allSettled(uniqueEmails.map((user) => sendEmail({
+      to: user.email,
+      subject: `New movie added at Hot Corner: ${movie.title}`,
+      body: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
+          <h2 style="color: #F84565;">Hi ${escapeHtml(user.name || "Movie Fan")},</h2>
+          <p>Hot Corner has added a new movie for booking.</p>
+          <p><strong>Movie:</strong> ${safeTitle}</p>
+          <p><strong>Ticket Price:</strong> ${roundedPrice}</p>
+          <p><strong>Show Time:</strong><br/>${scheduleText}</p>
+          <p>Book your seat before it fills up.</p>
+          <p>Greetings from,<br/><strong>Hot Corner</strong></p>
+        </div>
+      `,
+    })));
     const sentEmails = emailResults.reduce(
       (count, result) => count + (result.status === "fulfilled" ? result.value.accepted?.length || 0 : 0),
-      0
+      0,
     );
     const failedEmails = emailResults.reduce(
       (count, result) => count + (result.status === "fulfilled" ? result.value.rejected?.length || 0 : 1),
-      0
+      0,
     );
-    if (failedEmails > 0) {
-      console.error(`Failed to send ${failedEmails} new movie email(s)`);
+    if (failedEmails) console.error(`Failed to send ${failedEmails} new movie email(s)`);
+
+    return res.status(201).json({
+      success: true,
+      message: `Added ${schedule.length} show time${schedule.length === 1 ? "" : "s"}. Emails sent: ${sentEmails}, failed: ${failedEmails}`,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, message: error.message });
     }
-
-    res.json({success:true,message:`show added sucessfully. Emails sent: ${sentEmails}, failed: ${failedEmails}`})
-        
-                     
-
-    }catch (error) {
-    sendControllerError(res, "Error adding show:", error);
+    return sendControllerError(res, "Error adding show:", error);
   }
 };
 
-export const deleteShow = async (req,res)=>{
-    try {
-        const {showId}=req.params;
-        const show = await Show.findById(showId);
+export const deleteShow = async (req, res) => {
+  try {
+    const { showId } = req.params;
+    const show = await Show.findById(showId);
+    if (!show) return res.status(404).json({ success: false, message: "Show not found." });
 
-        if(!show){
-            return res.status(404).json({success:false,message:'Show not found'})
-        }
-
-        await Booking.deleteMany({show:showId});
-        await Show.findByIdAndDelete(showId);
-
-        res.json({success:true,message:'show deleted successfully'})
-    } catch (error) {
-        console.error("Error deleting show:", error);
-        res.status(500).json({success:false,message:error.message})
+    const paidBookingCount = await Booking.countDocuments({ show: showId, isPaid: true });
+    if (paidBookingCount) {
+      return res.status(409).json({
+        success: false,
+        message: "This show has paid bookings and cannot be deleted. Keeping it protects booking and revenue history.",
+      });
     }
-}
+
+    await Booking.deleteMany({ show: showId });
+    await Show.findByIdAndDelete(showId);
+    return res.json({ success: true, message: "Show deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting show:", error.message);
+    return res.status(500).json({ success: false, message: "Could not delete this show." });
+  }
+};
 
 export const autoAddDailyShows = async (req, res) => {
     try {

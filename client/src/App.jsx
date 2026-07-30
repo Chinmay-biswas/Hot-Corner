@@ -16,6 +16,7 @@ import ListBookings from './pages/admin/ListBookings'
 import ListShows from './pages/admin/ListShows'
 import AddShows from './pages/admin/AddShows'
 import ListUsers from './pages/admin/ListUsers'
+import WatchTogetherAdmin from './pages/admin/WatchTogether'
 import { useAppContext } from './context/AppContextCore'
 import { SignIn } from '@clerk/clerk-react'
 import Loading from './components/Loading.jsx'
@@ -68,6 +69,7 @@ const { user} = useAppContext();
   <Route path="list-shows" element={<ListShows />} />
   <Route path="list-bookings" element={<ListBookings />} />
   <Route path="list-users" element={<ListUsers />} />
+  <Route path="watch-together" element={<WatchTogetherAdmin />} />
 </Route>
 
 

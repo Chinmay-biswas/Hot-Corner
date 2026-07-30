@@ -7,7 +7,7 @@ const userSchema =new mongoose.Schema({
     phone:{type: String},
     totalTimeSpent:{type: Number, default:0},
     image:{type: String, required:true}
-})
+},{ timestamps: true })
 
 
 const User = mongoose.model('User',userSchema)

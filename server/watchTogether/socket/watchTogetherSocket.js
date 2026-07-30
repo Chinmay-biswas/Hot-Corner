@@ -12,6 +12,12 @@ import {
 } from "../utils/roomUtils.js";
 import { canControlRoom, isRoomHost, presentWatchRoom } from "../utils/roomPresenter.js";
 import { getCompletedR2Media } from "../services/r2Storage.js";
+import {
+  finishWatchSession,
+  recordWatchRoomActivity,
+  recordWatchSessionHeartbeat,
+  recordWatchSessionJoin,
+} from "../services/watchAnalyticsService.js";
 
 const participantLeaveTimers = new Map();
 const DEFAULT_PRESENCE_GRACE_MS = 12_000;
@@ -22,6 +28,15 @@ const respond = (acknowledgement, payload) => {
 };
 
 const toSocketError = (message) => ({ ok: false, error: message });
+
+const recordAnalyticsSafely = async (action, task) => {
+  try {
+    await task();
+  } catch (error) {
+    // The room remains usable even if its optional reporting write fails.
+    console.error(`Watch Together ${action} analytics failed:`, error.message);
+  }
+};
 
 const findActiveRoom = async (roomCode) => {
   const code = normalizeRoomCode(roomCode);
@@ -90,7 +105,9 @@ const broadcastRoomState = async (io, state, roomCode) => {
 
 const removeSocketFromRoom = async (socket, state) => {
   const code = socket.data.roomCode;
-  if (!code) return "";
+  if (!code) return null;
+
+  const room = socket.data.roomSnapshot;
 
   clearParticipantLeaveTimer(socket.id);
   await Promise.all([
@@ -98,15 +115,29 @@ const removeSocketFromRoom = async (socket, state) => {
     state.leaveCall(code, socket.id),
   ]);
   socket.data.roomCode = null;
+  socket.data.roomSnapshot = null;
   socket.data.inCall = false;
-  return code;
+  return { code, room };
 };
 
-const scheduleParticipantLeave = (io, state, code, socketId, presenceGraceMs) => {
+const finishSessionIfUserHasLeft = async ({ state, room, userId, leftAt }) => {
+  if (!room || !userId) return;
+  const remainingParticipants = await state.listParticipants(room.code);
+  if (remainingParticipants.some((participant) => participant.userId === userId)) return;
+
+  await recordAnalyticsSafely("session leave", () => finishWatchSession({ room, userId, leftAt }));
+};
+
+const scheduleParticipantLeave = (io, state, code, socketId, presenceGraceMs, onRemoved) => {
   const removeAndBroadcast = async () => {
-    participantLeaveTimers.delete(socketId);
-    await state.removeParticipant(code, socketId);
-    await broadcastRoomState(io, state, code);
+    try {
+      participantLeaveTimers.delete(socketId);
+      await state.removeParticipant(code, socketId);
+      await onRemoved?.();
+      await broadcastRoomState(io, state, code);
+    } catch (error) {
+      console.error("Watch Together participant leave failed:", error.message);
+    }
   };
 
   if (presenceGraceMs <= 0) {
@@ -150,6 +181,7 @@ export const initializeWatchTogetherSocket = (
 
   io.on("connection", (socket) => {
     socket.data.inCall = false;
+    socket.data.roomSnapshot = null;
 
     socket.on("watch:join", async (payload = {}, acknowledgement) => {
       try {
@@ -157,7 +189,13 @@ export const initializeWatchTogetherSocket = (
         const previousCode = socket.data.roomCode;
         if (previousCode) {
           socket.leave(roomKey(previousCode));
-          await removeSocketFromRoom(socket, state);
+          const removed = await removeSocketFromRoom(socket, state);
+          await finishSessionIfUserHasLeft({
+            state,
+            room: removed?.room,
+            userId: socket.data.userId,
+            leftAt: new Date(),
+          });
           await broadcastRoomState(io, state, previousCode);
         }
 
@@ -169,8 +207,10 @@ export const initializeWatchTogetherSocket = (
           image: cleanImageUrl(payload.image),
         };
         socket.data.roomCode = room.code;
+        socket.data.roomSnapshot = room;
         socket.data.profile = participant;
         await state.upsertParticipant(room.code, participant);
+        await recordAnalyticsSafely("session join", () => recordWatchSessionJoin({ room, participant }));
 
         const participants = await listParticipants(state, room);
         const callSocketIds = await state.listCallParticipants(room.code);
@@ -189,7 +229,15 @@ export const initializeWatchTogetherSocket = (
 
     socket.on("watch:presence-heartbeat", async () => {
       if (!socket.data.roomCode) return;
-      await state.touch(socket.data.roomCode, socket.id);
+      try {
+        await state.touch(socket.data.roomCode, socket.id);
+        await recordAnalyticsSafely("session heartbeat", () => recordWatchSessionHeartbeat({
+          room: socket.data.roomSnapshot,
+          userId: socket.data.userId,
+        }));
+      } catch (error) {
+        console.error("Watch Together presence heartbeat failed:", error.message);
+      }
     });
 
     socket.on("watch:playback", async (payload = {}, acknowledgement) => {
@@ -201,6 +249,8 @@ export const initializeWatchTogetherSocket = (
 
         room.playback = normalizePlayback(payload);
         await room.save();
+        socket.data.roomSnapshot = room;
+        await recordAnalyticsSafely("playback", () => recordWatchRoomActivity(room, "playback"));
         const presentedRoom = presentWatchRoom(room, socket.data.userId);
         const event = {
           playback: presentedRoom.playback,
@@ -232,6 +282,8 @@ export const initializeWatchTogetherSocket = (
         room.media = normalizeMedia(mediaInput);
         room.playback = { isPlaying: false, currentTime: 0, updatedAt: new Date() };
         await room.save();
+        socket.data.roomSnapshot = room;
+        await recordAnalyticsSafely("media change", () => recordWatchRoomActivity(room, "media_changed"));
         const event = { room: presentWatchRoom(room, socket.data.userId), updatedBy: socket.data.profile };
         io.to(roomKey(room.code)).emit("watch:media", event);
         return respond(acknowledgement, { ok: true, ...event });
@@ -274,6 +326,7 @@ export const initializeWatchTogetherSocket = (
         if (!writeResult.matchedCount) {
           return respond(acknowledgement, toSocketError("This room does not exist or has expired."));
         }
+        await recordAnalyticsSafely("message", () => recordWatchRoomActivity(room, "message"));
         io.to(roomKey(room.code)).emit("watch:chat", message);
         return respond(acknowledgement, { ok: true, message });
       } catch (error) {
@@ -337,14 +390,32 @@ export const initializeWatchTogetherSocket = (
       if (!code) return;
 
       const wasInCall = socket.data.inCall;
+      const room = socket.data.roomSnapshot;
+      const userId = socket.data.userId;
+      const disconnectedAt = new Date();
       socket.data.roomCode = null;
+      socket.data.roomSnapshot = null;
       socket.data.inCall = false;
       void (async () => {
-        await state.leaveCall(code, socket.id);
-        await state.markParticipantDisconnected(code, socket.id, reconnectGraceMs);
-        if (wasInCall) io.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
-        await broadcastCallState(io, state, code);
-        scheduleParticipantLeave(io, state, code, socket.id, reconnectGraceMs);
+        try {
+          await state.leaveCall(code, socket.id);
+          await state.markParticipantDisconnected(code, socket.id, reconnectGraceMs);
+          await recordAnalyticsSafely("session disconnect", () => recordWatchSessionHeartbeat({
+            room,
+            userId,
+            at: disconnectedAt,
+          }));
+          if (wasInCall) io.to(roomKey(code)).emit("watch:call-participant-left", { socketId: socket.id });
+          await broadcastCallState(io, state, code);
+          scheduleParticipantLeave(io, state, code, socket.id, reconnectGraceMs, () => finishSessionIfUserHasLeft({
+            state,
+            room,
+            userId,
+            leftAt: disconnectedAt,
+          }));
+        } catch (error) {
+          console.error("Watch Together disconnect cleanup failed:", error.message);
+        }
       })();
     });
   });
