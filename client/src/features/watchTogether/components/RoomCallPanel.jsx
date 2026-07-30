@@ -5,13 +5,22 @@ const StreamVideo = ({ stream, muted = false, label, videoEnabled = true }) => {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream || null;
+    if (!videoRef.current) return;
+    videoRef.current.srcObject = stream || null;
+    videoRef.current.play().catch(() => undefined);
   }, [stream]);
 
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg bg-black border border-white/10">
       {stream && videoEnabled ? (
-        <video ref={videoRef} autoPlay playsInline muted={muted} className="w-full h-full object-cover" />
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={muted}
+          onLoadedMetadata={(event) => event.currentTarget.play().catch(() => undefined)}
+          className="w-full h-full object-cover"
+        />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-gray-500"><VideoOff className="w-5 h-5" /></div>
       )}

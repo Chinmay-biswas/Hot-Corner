@@ -87,6 +87,17 @@ const isGoogleDriveUrl = (value) => {
   }
 };
 
+const isCloudinaryVideoUrl = (value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname === "res.cloudinary.com"
+      && /^\/[^/]+\/video\/upload\//.test(url.pathname);
+  } catch {
+    return false;
+  }
+};
+
 export const normalizePlayback = (value = {}) => {
   const currentTime = Number(value.currentTime);
   if (!Number.isFinite(currentTime) || currentTime < 0 || currentTime > MAX_PLAYBACK_SECONDS) {
@@ -139,6 +150,23 @@ export const normalizeMedia = (value = {}) => {
       previewUrl: `https://drive.google.com/file/d/${driveFileId}/preview`,
       thumbnail: isGoogleDriveUrl(suppliedThumbnail) ? suppliedThumbnail.slice(0, 1500) : "",
       mimeType: String(value.mimeType || "").startsWith("video/") ? value.mimeType.slice(0, 120) : "",
+    };
+  }
+
+  if (source === "cloudinary") {
+    const url = String(value.url || "").trim();
+    const publicId = String(value.cloudinaryPublicId || "").trim();
+    if (!isCloudinaryVideoUrl(url) || !/^hot-corner\/watch-together\/[A-Za-z0-9_-]{8,120}$/.test(publicId)) {
+      throw createValidationError("The prepared video is invalid.");
+    }
+
+    return {
+      source,
+      cloudinaryPublicId: publicId,
+      title: cleanMediaTitle(value.title, "Shared video"),
+      url: url.slice(0, 1500),
+      thumbnail: "",
+      mimeType: "video/mp4",
     };
   }
 

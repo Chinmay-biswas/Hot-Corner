@@ -15,7 +15,11 @@ import {
   updateRoomMedia,
   updateRoomPlayback,
 } from "../controllers/roomController.js";
+import { getWatchTogetherIceServers } from "../controllers/iceController.js";
+import { createDriveTranscoder } from "../services/driveTranscoder.js";
+import { MemoryRoomRealtimeState } from "../services/roomRealtimeState.js";
 import { initializeWatchTogetherSocket } from "../socket/watchTogetherSocket.js";
+import { normalizeMedia } from "../utils/roomUtils.js";
 import {
   extractYouTubeId,
   getGoogleDriveStreamCandidates,
@@ -113,6 +117,7 @@ const listen = (server) => new Promise((resolve, reject) => {
 });
 
 const closeServer = (server) => new Promise((resolve) => server.close(resolve));
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const connectSocket = async (url, token) => {
   const socket = createSocketClient(url, {
@@ -146,6 +151,85 @@ try {
   });
   assert.equal(driveMediaWithResourceKey.url, sampleDriveMedia.url);
   assert.ok(getGoogleDriveStreamCandidates(driveMediaWithResourceKey).includes(sampleDriveMedia.url));
+  assert.equal(normalizeMedia({
+    source: "cloudinary",
+    cloudinaryPublicId: "hot-corner/watch-together/abcdefgh12345678",
+    title: "Prepared video",
+    url: "https://res.cloudinary.com/example/video/upload/v1/hot-corner/watch-together/abcdefgh12345678.mp4",
+  }).source, "cloudinary");
+
+  const uploadRequests = [];
+  const cloudinaryMock = {
+    config: () => ({ cloud_name: "test-cloud", api_key: "test-key", api_secret: "test-secret" }),
+    uploader: {
+      upload: async (url, options) => {
+        uploadRequests.push({ url, options });
+        return { public_id: options.public_id };
+      },
+    },
+    api: {
+      resource: async (publicId) => ({
+        public_id: publicId,
+        eager: [{ format: "mp4", secure_url: `https://res.cloudinary.com/test-cloud/video/upload/${publicId}.mp4` }],
+      }),
+    },
+  };
+  const transcoder = createDriveTranscoder({ client: cloudinaryMock });
+  const directPreparation = await transcoder.prepare(sampleDriveMedia);
+  assert.equal(directPreparation.status, "ready");
+  const forcedPreparation = await transcoder.prepare(sampleDriveMedia, { forceTranscode: true });
+  assert.equal(forcedPreparation.status, "processing");
+  const incompatibleDriveMedia = { ...sampleDriveMedia, title: "Unsupported-video.mkv", mimeType: "video/x-matroska" };
+  const processingPreparation = await transcoder.prepare(incompatibleDriveMedia);
+  assert.equal(processingPreparation.status, "processing");
+  assert.equal(uploadRequests.length, 2);
+  assert.equal(uploadRequests[1].options.resource_type, "video");
+  assert.equal(uploadRequests[1].options.eager[0].video_codec, "h264");
+  const completedPreparation = await transcoder.getStatus(processingPreparation);
+  assert.equal(completedPreparation.status, "ready");
+  assert.equal(completedPreparation.media.source, "cloudinary");
+  const unavailableTranscoder = createDriveTranscoder({
+    client: { config: () => ({}), uploader: { upload: async () => ({}) }, api: {} },
+  });
+  await assert.rejects(
+    unavailableTranscoder.prepare(incompatibleDriveMedia),
+    (error) => error.statusCode === 503,
+  );
+
+  const originalTurnUrls = process.env.WATCH_TOGETHER_TURN_URLS;
+  const originalTurnSecret = process.env.WATCH_TOGETHER_TURN_SHARED_SECRET;
+  try {
+    process.env.WATCH_TOGETHER_TURN_URLS = "turns:turn.example.test:5349?transport=tcp";
+    process.env.WATCH_TOGETHER_TURN_SHARED_SECRET = "test-turn-secret";
+    const iceResponse = await invokeController(getWatchTogetherIceServers, { userId: userIds.host });
+    assert.equal(iceResponse.statusCode, 200);
+    assert.equal(iceResponse.body.relayConfigured, true);
+    const turnServer = iceResponse.body.iceServers.find((server) => String(server.urls).includes("turns:"));
+    assert.ok(turnServer?.username.includes(userIds.host));
+    assert.ok(turnServer?.credential);
+  } finally {
+    if (originalTurnUrls === undefined) delete process.env.WATCH_TOGETHER_TURN_URLS;
+    else process.env.WATCH_TOGETHER_TURN_URLS = originalTurnUrls;
+    if (originalTurnSecret === undefined) delete process.env.WATCH_TOGETHER_TURN_SHARED_SECRET;
+    else process.env.WATCH_TOGETHER_TURN_SHARED_SECRET = originalTurnSecret;
+  }
+
+  const realtimeState = new MemoryRoomRealtimeState({ staleConnectionMs: 1_000 });
+  await realtimeState.upsertParticipant("STATE", {
+    userId: userIds.host,
+    socketId: "state-host",
+    name: "State Host",
+    image: "",
+  });
+  assert.equal((await realtimeState.listParticipants("STATE")).length, 1);
+  await realtimeState.markParticipantDisconnected("STATE", "state-host", 40);
+  assert.equal((await realtimeState.listParticipants("STATE")).length, 1);
+  await wait(55);
+  assert.equal((await realtimeState.listParticipants("STATE")).length, 0);
+  assert.deepEqual(await realtimeState.joinCall("STATE", "call-host"), []);
+  assert.deepEqual(await realtimeState.joinCall("STATE", "call-guest"), ["call-host"]);
+  await realtimeState.leaveCall("STATE", "call-host");
+  assert.deepEqual(await realtimeState.listCallParticipants("STATE"), ["call-guest"]);
   const delayedPlayback = getPlaybackTime({
     isPlaying: true,
     currentTime: 10,

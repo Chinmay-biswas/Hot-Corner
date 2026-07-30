@@ -1,13 +1,15 @@
   {
     "version": 2,
+    "fluid": true,
     "builds": [
         {
             "src": "server.js",
             "use": "@vercel/node",
             "config": {
-                "includeFiles": [
+            "includeFiles": [
                     "dist/**"
-                ]
+                ],
+                "maxDuration": 300
             }
         }
     ],
