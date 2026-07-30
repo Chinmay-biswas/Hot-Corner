@@ -186,6 +186,8 @@ const WatchTogetherLobby = ({ user, axios, getToken }) => {
               prepareDriveMedia={prepareDriveMedia}
               submitting={creating}
               actionLabel="Create watch room"
+              axios={axios}
+              getToken={getToken}
             />
           </section>
 
@@ -443,6 +445,8 @@ const WatchRoomView = ({ roomCode, user, axios, getToken }) => {
               prepareDriveMedia={prepareDriveMedia}
               actionLabel="Change room video"
               initialMedia={room.media}
+              axios={axios}
+              getToken={getToken}
             />
           </section>
         </div>

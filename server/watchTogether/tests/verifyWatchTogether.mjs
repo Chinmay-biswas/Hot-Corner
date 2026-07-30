@@ -17,6 +17,7 @@ import {
 } from "../controllers/roomController.js";
 import { getWatchTogetherIceServers } from "../controllers/iceController.js";
 import { createDriveTranscoder } from "../services/driveTranscoder.js";
+import { getR2UploadStatus } from "../services/r2Storage.js";
 import { MemoryRoomRealtimeState } from "../services/roomRealtimeState.js";
 import { initializeWatchTogetherSocket } from "../socket/watchTogetherSocket.js";
 import { normalizeMedia } from "../utils/roomUtils.js";
@@ -29,6 +30,7 @@ import {
   toDriveMedia,
 } from "../../../client/src/features/watchTogether/lib/media.js";
 import { uploadGoogleDriveVideo } from "../../../client/src/features/watchTogether/lib/googleDrive.js";
+import { validateDirectVideoFile } from "../../../client/src/features/watchTogether/lib/directUpload.js";
 
 const runId = `WT${Date.now().toString(36).toUpperCase()}`.slice(0, 10);
 const userIds = {
@@ -157,6 +159,16 @@ try {
     title: "Prepared video",
     url: "https://res.cloudinary.com/example/video/upload/v1/hot-corner/watch-together/abcdefgh12345678.mp4",
   }).source, "cloudinary");
+  assert.equal(normalizeMedia({
+    source: "r2",
+    r2UploadId: "79b2e91c-d814-4af7-9b23-a6c5948d33f8",
+    title: "Direct upload",
+    url: "https://example.r2.cloudflarestorage.com/watch-together/sample.mp4?X-Amz-Signature=test",
+    mimeType: "video/mp4",
+  }).source, "r2");
+  assert.equal(validateDirectVideoFile({ name: "movie.webm" }), "");
+  assert.match(validateDirectVideoFile({ name: "movie.mkv" }), /MP4/);
+  assert.equal(typeof getR2UploadStatus().configured, "boolean");
 
   const uploadRequests = [];
   const cloudinaryMock = {

@@ -11,7 +11,7 @@ const playbackSchema = new mongoose.Schema(
 
 const mediaSchema = new mongoose.Schema(
   {
-    source: { type: String, enum: ["youtube", "drive", "cloudinary"], required: true },
+    source: { type: String, enum: ["youtube", "drive", "cloudinary", "r2"], required: true },
     title: { type: String, required: true, maxlength: 160 },
     url: { type: String, required: true },
     previewUrl: { type: String },
@@ -20,6 +20,7 @@ const mediaSchema = new mongoose.Schema(
     driveFileId: { type: String },
     resourceKey: { type: String },
     cloudinaryPublicId: { type: String },
+    r2UploadId: { type: String },
     mimeType: { type: String },
   },
   { _id: false },
