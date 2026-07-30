@@ -15,6 +15,10 @@ const tmdbHeaders = () => ({
 const TMDB_REQUEST_TIMEOUT_MS = 15000;
 const TMDB_MAX_RETRIES = 2;
 const TMDB_RETRY_DELAY_MS = 700;
+const TRAILER_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let upcomingTrailersCache = { expiresAt: 0, trailers: [] };
+let upcomingTrailersRequest = null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const createValidationError = (message) => {
@@ -182,37 +186,61 @@ export const getReleases = async (req, res) => {
   }
 };
 
+const fetchUpcomingTrailers = async () => {
+  const { data } = await fetchTmdb('https://api.themoviedb.org/3/movie/upcoming');
+
+  const moviesWithVideos = await Promise.all(
+    data.results.map(async (movie) => {
+      try {
+        const { data: videoData } = await fetchTmdb(`https://api.themoviedb.org/3/movie/${movie.id}/videos`);
+
+        const video = videoData.results.find(
+          (item) => item.site === 'YouTube' && item.type === 'Trailer'
+        ) || videoData.results.find(
+          (item) => item.site === 'YouTube' && item.type === 'Teaser'
+        );
+
+        if (!video) return null;
+
+        return {
+          id: movie.id,
+          title: movie.title,
+          image: `https://img.youtube.com/vi/${video.key}/maxresdefault.jpg`,
+          videoUrl: `https://www.youtube.com/watch?v=${video.key}`,
+        };
+      } catch (error) {
+        console.error(`Error fetching videos for ${movie.id}:`, error.message);
+        return null;
+      }
+    })
+  );
+
+  return moviesWithVideos.filter(Boolean);
+};
+
 export const getUpcomingTrailers = async (req, res) => {
   try {
-    const { data } = await fetchTmdb('https://api.themoviedb.org/3/movie/upcoming');
+    if (upcomingTrailersCache.expiresAt > Date.now()) {
+      return res.json({ success: true, trailers: upcomingTrailersCache.trailers });
+    }
 
-    const moviesWithVideos = await Promise.all(
-      data.results.slice(0, 12).map(async (movie) => {
-        try {
-          const { data: videoData } = await fetchTmdb(`https://api.themoviedb.org/3/movie/${movie.id}/videos`);
+    if (!upcomingTrailersRequest) {
+      upcomingTrailersRequest = fetchUpcomingTrailers()
+        .then((trailers) => {
+          if (trailers.length) {
+            upcomingTrailersCache = {
+              expiresAt: Date.now() + TRAILER_CACHE_TTL_MS,
+              trailers,
+            };
+          }
+          return trailers;
+        })
+        .finally(() => {
+          upcomingTrailersRequest = null;
+        });
+    }
 
-          const video = videoData.results.find(
-            (item) => item.site === 'YouTube' && item.type === 'Trailer'
-          ) || videoData.results.find(
-            (item) => item.site === 'YouTube' && item.type === 'Teaser'
-          );
-
-          if (!video) return null;
-
-          return {
-            id: movie.id,
-            title: movie.title,
-            image: `https://img.youtube.com/vi/${video.key}/maxresdefault.jpg`,
-            videoUrl: `https://www.youtube.com/watch?v=${video.key}`,
-          };
-        } catch (error) {
-          console.error(`Error fetching videos for ${movie.id}:`, error.message);
-          return null;
-        }
-      })
-    );
-
-    const trailers = moviesWithVideos.filter(Boolean).slice(0, 4);
+    const trailers = await upcomingTrailersRequest;
 
     res.json({ success: true, trailers });
   } catch (error) {

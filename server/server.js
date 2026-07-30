@@ -27,8 +27,26 @@ const allowedOrigins = (process.env.CLIENT_URL || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const isLocalDevelopmentOrigin = (origin) => {
+  if (process.env.NODE_ENV === 'production' || !origin) return false;
+
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+  } catch {
+    return false;
+  }
+};
+
 const corsOptions = {
-  origin: allowedOrigins.length ? allowedOrigins : true,
+  origin: (origin, callback) => {
+    const isAllowed = !origin
+      || !allowedOrigins.length
+      || allowedOrigins.includes(origin)
+      || isLocalDevelopmentOrigin(origin);
+    callback(isAllowed ? null : new Error('Origin is not allowed by CORS.'), isAllowed);
+  },
   credentials: true,
 };
 const httpServer = createServer(app);
