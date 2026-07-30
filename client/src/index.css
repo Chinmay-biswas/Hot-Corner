@@ -21,6 +21,29 @@ body{
   scrollbar-width:none;
 }
 
+.trailer-rail {
+  scrollbar-width: thin;
+  scrollbar-color: #f84565 #18181b;
+}
+
+.trailer-rail::-webkit-scrollbar {
+  height: 8px;
+}
+
+.trailer-rail::-webkit-scrollbar-track {
+  background: #18181b;
+  border-radius: 999px;
+}
+
+.trailer-rail::-webkit-scrollbar-thumb {
+  background: #f84565;
+  border-radius: 999px;
+}
+
+.trailer-rail::-webkit-scrollbar-thumb:hover {
+  background: #ff6e86;
+}
+
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button{
     -webkit-appearance: none;

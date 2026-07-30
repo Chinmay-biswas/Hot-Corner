@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactPlayer from 'react-player'
 import BlurCircle from './BlurCircle'
 import { PlayCircleIcon } from 'lucide-react'
@@ -8,6 +8,7 @@ const TrailersSection = () => {
   const { axios } = useAppContext()
   const [trailers, setTrailers] = useState([])
   const [currentTrailer, setCurrentTrailer] = useState(null)
+  const trailerRailRef = useRef(null)
 
   const fetchTrailers = useCallback(async () => {
     try {
@@ -24,6 +25,27 @@ const TrailersSection = () => {
   useEffect(() => {
     fetchTrailers()
   }, [fetchTrailers])
+
+  const handleTrailerRailWheel = useCallback((event) => {
+    const rail = trailerRailRef.current
+    if (!rail || rail.scrollWidth <= rail.clientWidth) return
+
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      ? event.deltaX
+      : event.deltaY
+    if (!delta) return
+
+    event.preventDefault()
+    rail.scrollBy({ left: delta, behavior: 'smooth' })
+  }, [])
+
+  useEffect(() => {
+    const rail = trailerRailRef.current
+    if (!rail) return undefined
+
+    rail.addEventListener('wheel', handleTrailerRailWheel, { passive: false })
+    return () => rail.removeEventListener('wheel', handleTrailerRailWheel)
+  }, [handleTrailerRailWheel, trailers.length])
 
   if (!currentTrailer) return null
 
@@ -42,19 +64,32 @@ const TrailersSection = () => {
         />
       </div>
 
-      <div className='grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 mt-8 max-w-xs sm:max-w-3xl mx-auto'>
-        {trailers.map((trailer) => (
-          <button
-            key={trailer.videoUrl}
-            type='button'
-            className='relative text-left group-hover:opacity-50 hover:opacity-100 hover:-translate-y-1 duration-300 transition max-md:h-60 md:max-h60 cursor-pointer'
-            onClick={() => setCurrentTrailer(trailer)}
-          >
-            <img src={trailer.image} alt={trailer.title} className='rounded-lg w-full h-full object-cover brightness-75' />
-            <PlayCircleIcon strokeWidth={1.6} className='text-orange-700 hover:text-orange-500 absolute top-1/2 left-1/2 w-5 md:w-8 h-5 md:h-12 transform -translate-x-1/2 -translate-y-1/2' />
-            <p className='mt-2 text-sm text-gray-300 truncate'>{trailer.title}</p>
-          </button>
-        ))}
+      <div
+        ref={trailerRailRef}
+        className='trailer-rail mt-8 max-w-3xl mx-auto overflow-x-auto overflow-y-hidden overscroll-contain snap-x snap-mandatory scroll-smooth pb-4'
+        aria-label='Upcoming trailers'
+      >
+        <div className='flex w-max gap-4 px-1 sm:gap-5'>
+          {trailers.map((trailer) => {
+            const selected = currentTrailer.videoUrl === trailer.videoUrl
+
+            return (
+              <button
+                key={trailer.videoUrl}
+                type='button'
+                aria-pressed={selected}
+                className={`group relative w-40 shrink-0 snap-start text-left transition duration-300 cursor-pointer sm:w-44 md:w-48 ${selected ? 'opacity-100' : 'opacity-75 hover:opacity-100'} hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-primary`}
+                onClick={() => setCurrentTrailer(trailer)}
+              >
+                <div className={`relative aspect-video overflow-hidden rounded-lg border transition ${selected ? 'border-primary' : 'border-transparent group-hover:border-primary/60'}`}>
+                  <img src={trailer.image} alt={trailer.title} className='h-full w-full object-cover brightness-75 transition duration-300 group-hover:scale-105 group-hover:brightness-90' />
+                  <PlayCircleIcon strokeWidth={1.6} className='absolute top-1/2 left-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-primary drop-shadow-md transition group-hover:scale-110' />
+                </div>
+                <p className='mt-2 truncate text-sm text-gray-300'>{trailer.title}</p>
+              </button>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
